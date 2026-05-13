@@ -14,6 +14,7 @@ Bot Telegram untuk catat pemasukan & pengeluaran bulanan. Multi-user (data tiap 
 - **Reminder harian**: `/reminder on 20`
 - **Export Excel/CSV**: `/export xlsx` / `/export csv`
 - **Import Excel**: kirim file `.xlsx` ke chat → bot tampilkan preview perubahan → konfirmasi
+- **Baca struk pembayaran (OCR)**: kirim foto struk → bot extract merchant, tanggal, total, kategori pakai Gemini Vision → konfirmasi sebelum simpan. Free tier (`GEMINI_API_KEY` dari [aistudio.google.com/apikey](https://aistudio.google.com/apikey)).
 - **Parsing fleksibel**: `35rb`, `1.5jt`, `5,000.50`, `5.000`, semua diterima
 - **Multi-currency & multi-timezone**: `/currency USD`, `/timezone Asia/Makassar`
 - **Allow-list mode (opsional)**: batasi akses dengan `ALLOWED_USER_IDS` di env
@@ -63,6 +64,7 @@ cp .env.example .env
 #   - TELEGRAM_BOT_TOKEN: token dari @BotFather
 #   - POSTGRES_PASSWORD: password yang aman
 #   - ALLOWED_USER_IDS: (opsional) batasi siapa yang boleh akses
+#   - GEMINI_API_KEY: (opsional) aktifin fitur OCR struk
 # DATABASE_URL otomatis di-set ke postgres lewat docker-compose
 
 # 3. Build & jalankan

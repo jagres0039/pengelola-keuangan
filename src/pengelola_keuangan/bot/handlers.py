@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 from collections.abc import Callable, Coroutine
+from datetime import datetime as datetime_t
 from decimal import Decimal
 from typing import Any, cast
 
@@ -23,6 +24,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from pengelola_keuangan.bot import messages
+from pengelola_keuangan.config import get_settings
 from pengelola_keuangan.db.models import TransactionType, User
 from pengelola_keuangan.db.session import session_scope
 from pengelola_keuangan.services import budgets as budgets_svc
@@ -30,6 +32,7 @@ from pengelola_keuangan.services import categories as categories_svc
 from pengelola_keuangan.services import charts as charts_svc
 from pengelola_keuangan.services import exporting as exporting_svc
 from pengelola_keuangan.services import importing as importing_svc
+from pengelola_keuangan.services import receipt_ocr as receipt_ocr_svc
 from pengelola_keuangan.services import recurring as recurring_svc
 from pengelola_keuangan.services import transactions as transactions_svc
 from pengelola_keuangan.services import users as users_svc
@@ -60,6 +63,7 @@ logger = logging.getLogger(__name__)
 # Context storage keys.
 PENDING_IMPORT_KEY = "pending_import"
 PENDING_DELETE_KEY = "pending_delete"
+PENDING_RECEIPT_KEY = "pending_receipt"
 
 
 def _require_message(update: Update) -> Message:
@@ -856,3 +860,213 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _ = context
     message = _require_message(update)
     await _send(message, "❓ Perintah tidak dikenal. Ketik /help untuk daftar perintah.")
+
+
+# --------------------------------------------------------------------------- #
+# Receipt OCR (kirim foto struk -> Gemini Vision)
+# --------------------------------------------------------------------------- #
+
+
+async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a photo upload as a receipt OCR request."""
+    message = _require_message(update)
+    tg_user = _require_user(update)
+    if not users_svc.is_user_allowed(tg_user.id):
+        await _send(message, messages.access_denied())
+        return
+
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        await _send(message, messages.receipt_disabled())
+        return
+
+    photos = message.photo or ()
+    document = message.document
+    image_bytes: bytes | None = None
+    mime_type = "image/jpeg"
+
+    if photos:
+        photo = max(photos, key=lambda p: (p.width or 0) * (p.height or 0))
+        file = await photo.get_file()
+        bio = io.BytesIO()
+        await file.download_to_memory(out=bio)
+        image_bytes = bio.getvalue()
+    elif document is not None and (document.mime_type or "").startswith("image/"):
+        file = await document.get_file()
+        bio = io.BytesIO()
+        await file.download_to_memory(out=bio)
+        image_bytes = bio.getvalue()
+        mime_type = document.mime_type or "image/jpeg"
+
+    if image_bytes is None:
+        return
+
+    notice = await message.reply_text(messages.receipt_scanning())
+
+    with session_scope() as session:
+        user, _ = users_svc.ensure_user(
+            session,
+            tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        expense_categories = categories_svc.list_categories(
+            session, user.id, TransactionType.EXPENSE
+        )
+        category_names = [c.name for c in expense_categories]
+        user_currency = user.currency
+        user_tz = user.timezone
+
+    try:
+        result = receipt_ocr_svc.parse_receipt(
+            image_bytes,
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            mime_type=mime_type,
+            category_hints=category_names,
+            default_currency=user_currency,
+        )
+    except receipt_ocr_svc.ReceiptParseError as exc:
+        logger.warning("Receipt parse failed: %s", exc)
+        try:
+            await notice.edit_text(messages.receipt_parse_failed(str(exc)))
+        except Exception:
+            await message.reply_text(messages.receipt_parse_failed(str(exc)))
+        return
+
+    if not result.is_receipt:
+        try:
+            await notice.edit_text(messages.receipt_not_a_receipt())
+        except Exception:
+            await message.reply_text(messages.receipt_not_a_receipt())
+        return
+
+    if result.total_amount <= 0:
+        try:
+            await notice.edit_text(
+                messages.receipt_parse_failed("Total tidak terdeteksi dari struk.")
+            )
+        except Exception:
+            await message.reply_text(
+                messages.receipt_parse_failed("Total tidak terdeteksi dari struk.")
+            )
+        return
+
+    # Determine which existing category matches the suggestion (case-insensitive).
+    chosen_name: str | None = None
+    if result.suggested_category:
+        suggestion = result.suggested_category.strip().lower()
+        for name in category_names:
+            if name.lower() == suggestion:
+                chosen_name = name
+                break
+
+    display_category = chosen_name or result.suggested_category or "Lainnya"
+
+    pending = {
+        "merchant": result.merchant,
+        "amount": str(result.total_amount),
+        "occurred_at": result.occurred_at.isoformat() if result.occurred_at else None,
+        "category_name": chosen_name,
+        "notes": result.notes,
+    }
+    context.user_data[PENDING_RECEIPT_KEY] = pending  # type: ignore[index]
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Simpan", callback_data="receipt:save"),
+                InlineKeyboardButton("❌ Batal", callback_data="receipt:cancel"),
+            ]
+        ]
+    )
+    preview = messages.receipt_preview(
+        merchant=result.merchant,
+        amount=result.total_amount,
+        currency=user_currency,
+        occurred_at=result.occurred_at,
+        category_name=display_category,
+        notes=result.notes,
+        tz_name=user_tz,
+    )
+    try:
+        await notice.edit_text(preview, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+    except Exception:
+        await message.reply_text(preview, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+
+
+async def receipt_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle Save/Cancel buttons under a receipt preview."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    await query.answer()
+
+    pending = cast(dict[str, object] | None, context.user_data.get(PENDING_RECEIPT_KEY))  # type: ignore[union-attr]
+
+    if query.data == "receipt:cancel":
+        context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
+        await query.edit_message_text(messages.receipt_cancelled())
+        return
+
+    if query.data != "receipt:save":
+        return
+
+    if pending is None:
+        await query.edit_message_text("⌛ Tidak ada struk yang menunggu.")
+        return
+
+    tg_user = _require_user(update)
+    if not users_svc.is_user_allowed(tg_user.id):
+        await query.edit_message_text(messages.access_denied())
+        return
+
+    amount = Decimal(cast(str, pending["amount"]))
+    occurred_at_iso = cast(str | None, pending.get("occurred_at"))
+    occurred_at: datetime_t | None = None
+    if occurred_at_iso:
+        try:
+            occurred_at = datetime_t.fromisoformat(occurred_at_iso)
+        except ValueError:
+            occurred_at = None
+
+    merchant = cast(str, pending.get("merchant") or "")
+    category_name = cast(str | None, pending.get("category_name"))
+    notes = cast(str, pending.get("notes") or "")
+
+    note_parts: list[str] = []
+    if merchant:
+        note_parts.append(merchant)
+    if notes and notes.lower() != merchant.lower():
+        note_parts.append(notes)
+    note = " — ".join(note_parts) if note_parts else None
+
+    with session_scope() as session:
+        user, _ = users_svc.ensure_user(
+            session,
+            tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        if category_name:
+            category = categories_svc.get_or_create_category(
+                session, user.id, category_name, TransactionType.EXPENSE
+            )
+        else:
+            category = categories_svc.fallback_category(session, user.id, TransactionType.EXPENSE)
+
+        transaction = transactions_svc.create_transaction(
+            session,
+            user_id=user.id,
+            transaction_type=TransactionType.EXPENSE,
+            amount=amount,
+            category_id=category.id,
+            note=note,
+            occurred_at=occurred_at,
+            user_tz=user.timezone,
+        )
+        currency = user.currency
+        msg = messages.receipt_saved(transaction, category, currency)
+
+    context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
+    await query.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
