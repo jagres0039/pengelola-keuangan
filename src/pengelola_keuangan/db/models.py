@@ -40,20 +40,26 @@ class RecurringFrequency(StrEnum):
 
 
 class User(Base):
-    """Telegram user that interacts with the bot."""
+    """User of the system (via Telegram bot, PWA, or both)."""
 
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(
-        BigInteger, unique=True, index=True, nullable=False
+    telegram_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, unique=True, index=True, nullable=True
     )
+    email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(64))
     first_name: Mapped[str | None] = mapped_column(String(128))
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Jakarta", nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="IDR", nullable=False)
     reminder_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reminder_hour: Mapped[int] = mapped_column(default=20, nullable=False)
+    link_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    link_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

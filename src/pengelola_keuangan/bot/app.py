@@ -99,6 +99,7 @@ def build_application() -> Application:
 
     application.add_handler(CommandHandler("reminder", handlers.reminder_command))
     application.add_handler(CommandHandler("export", handlers.export_command))
+    application.add_handler(CommandHandler("link", handlers.link_command))
 
     application.add_handler(
         MessageHandler(filters.Document.FileExtension("xlsx"), handlers.import_document_handler)

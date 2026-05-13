@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+html, body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea, [contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Mobile safe-area padding */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+}
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 0.5rem);
+}
