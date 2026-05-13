@@ -51,6 +51,24 @@ class Settings(BaseSettings):
         default="gemini-2.5-flash",
         description="Gemini model yang dipakai buat OCR struk.",
     )
+    jwt_secret: str = Field(
+        default="change-me-please-this-is-not-secure",
+        description=(
+            "Secret untuk sign JWT access token. WAJIB di-set di production "
+            "(minimal 32 char random). Default cuma buat dev."
+        ),
+    )
+    jwt_expires_minutes: int = Field(
+        default=60 * 24 * 30,
+        description="Durasi JWT access token (menit). Default 30 hari.",
+    )
+    cors_allow_origins: str = Field(
+        default="*",
+        description=(
+            "Daftar origin yang boleh hit API (CORS), comma-separated. "
+            "'*' = boleh semua (dev). Production set ke domain PWA lo."
+        ),
+    )
 
     @field_validator("default_currency")
     @classmethod
@@ -72,6 +90,14 @@ class Settings(BaseSettings):
             except ValueError:
                 continue
         return out
+
+    @property
+    def cors_allow_origins_list(self) -> list[str]:
+        """Parse cors_allow_origins into a list."""
+        raw = self.cors_allow_origins.strip()
+        if not raw or raw == "*":
+            return ["*"]
+        return [piece.strip() for piece in raw.split(",") if piece.strip()]
 
 
 _settings: Settings | None = None

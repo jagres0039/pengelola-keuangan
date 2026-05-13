@@ -1,6 +1,8 @@
-# Pengelola Keuangan — Telegram Bot
+# Pengelola Keuangan — Telegram Bot + PWA
 
-Bot Telegram untuk catat pemasukan & pengeluaran bulanan. Multi-user (data tiap orang terisolasi), bahasa Indonesia, dilengkapi budget, chart, recurring transactions, reminder harian, dan import/export Excel.
+Aplikasi pengelola keuangan personal: catat pemasukan & pengeluaran, OCR struk, multi-user.
+Bisa diakses dari Telegram (bot) **dan** dari ponsel sebagai PWA (Progressive Web App, install ke home screen).
+Database & data sama, dua-duanya jalan paralel.
 
 ## Fitur
 
@@ -21,10 +23,24 @@ Bot Telegram untuk catat pemasukan & pengeluaran bulanan. Multi-user (data tiap 
 
 ## Tech stack
 
-- Python 3.12 + `python-telegram-bot` 22
+**Backend (Python 3.12)**
+- `python-telegram-bot` 22 (bot Telegram)
+- FastAPI + uvicorn (REST API untuk PWA)
 - PostgreSQL (production) / SQLite (local dev) via SQLAlchemy 2.0 + Alembic migrations
+- `bcrypt` + JWT (PyJWT) untuk auth PWA
 - `matplotlib` untuk chart, `openpyxl` untuk export/import Excel
+- Gemini Vision (free tier) untuk OCR struk
 - `APScheduler` (via PTB job queue) untuk reminder & recurring
+
+**Frontend (PWA)**
+- Next.js 15 + React 19 + TypeScript
+- Tailwind CSS, mobile-first responsive design
+- Manifest + service worker (installable to Android home screen, offline app shell)
+
+**Deployment**
+- Docker + docker-compose (postgres + bot + api + web + nginx + certbot + duckdns updater)
+- nginx (reverse proxy + TLS termination) + Let's Encrypt (auto-renew tiap 12 jam)
+- DuckDNS untuk dynamic DNS gratis
 
 ## Setup local (tanpa Docker)
 
@@ -67,14 +83,31 @@ cp .env.example .env
 #   - GEMINI_API_KEY: (opsional) aktifin fitur OCR struk
 # DATABASE_URL otomatis di-set ke postgres lewat docker-compose
 
-# 3. Build & jalankan
-docker compose up -d --build
+# 3. Build & jalankan (kalo TIDAK pake PWA, cukup db + bot)
+docker compose up -d --build db bot
 
 # 4. Cek log
 docker compose logs -f bot
 ```
 
 Bot otomatis jalan migration Alembic pas start, jadi schema langsung siap.
+
+### Deploy PWA + API (dengan HTTPS Let's Encrypt)
+
+Setelah `.env` terisi (`DOMAIN`, `LETSENCRYPT_EMAIL`, `DUCKDNS_*`, `JWT_SECRET`):
+
+```bash
+# Pastikan DNS DOMAIN udah ngarah ke IP VPS lo
+dig +short $DOMAIN
+
+# First-run: issue Let's Encrypt cert + bootstrap stack
+bash deploy/init-letsencrypt.sh
+
+# Setelah berhasil, swap nginx ke HTTPS config & full stack
+docker compose up -d --build
+```
+
+Akses PWA di `https://$DOMAIN`. Buka di Chrome Android → titik tiga → **"Install app"** → muncul di home screen.
 
 ### Update di VPS
 
