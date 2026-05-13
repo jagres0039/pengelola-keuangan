@@ -107,6 +107,12 @@ def build_application() -> Application:
         CallbackQueryHandler(handlers.import_callback_handler, pattern=r"^import:")
     )
 
+    application.add_handler(MessageHandler(filters.PHOTO, handlers.receipt_photo_handler))
+    application.add_handler(MessageHandler(filters.Document.IMAGE, handlers.receipt_photo_handler))
+    application.add_handler(
+        CallbackQueryHandler(handlers.receipt_callback_handler, pattern=r"^receipt:")
+    )
+
     application.add_handler(MessageHandler(filters.COMMAND, handlers.unknown_command))
 
     register_jobs(application)

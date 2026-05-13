@@ -40,6 +40,17 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated telegram_user_id yang boleh akses bot.",
     )
+    gemini_api_key: str = Field(
+        default="",
+        description=(
+            "API key Google AI Studio (Gemini) untuk OCR struk. "
+            "Kosongin = fitur OCR struk dimatiin."
+        ),
+    )
+    gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description="Gemini model yang dipakai buat OCR struk.",
+    )
 
     @field_validator("default_currency")
     @classmethod

@@ -27,6 +27,8 @@ services:
       DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-IDR}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ALLOWED_USER_IDS: ${ALLOWED_USER_IDS:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
 
 volumes:
   postgres_data:
