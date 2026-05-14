@@ -42,13 +42,32 @@ async function request<T>(
   const ct = resp.headers.get("content-type") || "";
   const data = ct.includes("application/json") ? await resp.json() : await resp.text();
   if (!resp.ok) {
-    const detail =
-      typeof data === "string"
-        ? data
-        : data?.detail ?? `request failed (${resp.status})`;
-    throw { detail: String(detail), status: resp.status } satisfies ApiError;
+    throw {
+      detail: extractDetail(data, resp.status),
+      status: resp.status,
+    } satisfies ApiError;
   }
   return data as T;
+}
+
+function extractDetail(data: unknown, status: number): string {
+  if (typeof data === "string" && data.length > 0) return data;
+  if (data && typeof data === "object" && "detail" in data) {
+    const d = (data as { detail: unknown }).detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) {
+      const msgs = d
+        .map((item) => {
+          if (item && typeof item === "object" && "msg" in item) {
+            return String((item as { msg: unknown }).msg);
+          }
+          return typeof item === "string" ? item : "";
+        })
+        .filter((s) => s.length > 0);
+      if (msgs.length > 0) return msgs.join("; ");
+    }
+  }
+  return `request failed (${status})`;
 }
 
 export const api = {
