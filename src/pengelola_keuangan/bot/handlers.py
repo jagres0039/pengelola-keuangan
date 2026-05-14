@@ -1150,42 +1150,44 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 Transaction as _T,
             )
 
-            # Re-point all transactions to pwa_user, matching categories by name+type.
-            pwa_cats = {
+            # 1. Copy any non-default categories from the Telegram-only user that
+            #    don't yet exist on the PWA user. Flush so we have IDs to re-point to.
+            pwa_cats: dict[tuple[str, TransactionType], _C] = {
                 (c.name.lower(), c.type): c
                 for c in session.scalars(_select(_C).where(_C.user_id == pwa_user.id))
             }
+            for cat in list(session.scalars(_select(_C).where(_C.user_id == existing.id))):
+                key = (cat.name.lower(), cat.type)
+                if key in pwa_cats:
+                    continue
+                new_cat = _C(
+                    user_id=pwa_user.id,
+                    name=cat.name,
+                    type=cat.type,
+                    emoji=cat.emoji,
+                    is_default=cat.is_default,
+                )
+                session.add(new_cat)
+                pwa_cats[key] = new_cat
+            session.flush()
+
+            # 2. Re-point transactions onto the PWA user using the now-complete category map.
             for tx in session.scalars(_select(_T).where(_T.user_id == existing.id)):
                 tx.user_id = pwa_user.id
                 if tx.category is not None:
                     match = pwa_cats.get((tx.category.name.lower(), tx.type))
-                    tx.category_id = match.id if match is not None else None
+                    if match is not None:
+                        tx.category_id = match.id
 
-            # Re-point recurring templates similarly
+            # 3. Re-point recurring templates similarly.
             for rec in session.scalars(_select(_R).where(_R.user_id == existing.id)):
                 rec.user_id = pwa_user.id
                 if rec.category is not None:
                     match = pwa_cats.get((rec.category.name.lower(), rec.type))
-                    rec.category_id = match.id if match is not None else None
+                    if match is not None:
+                        rec.category_id = match.id
 
-            # Copy non-default categories that don't already exist on pwa_user
-            for cat in list(
-                session.scalars(
-                    _select(_C).where(_C.user_id == existing.id).where(_C.is_default.is_(False))
-                )
-            ):
-                key = (cat.name.lower(), cat.type)
-                if key not in pwa_cats:
-                    new_cat = _C(
-                        user_id=pwa_user.id,
-                        name=cat.name,
-                        type=cat.type,
-                        emoji=cat.emoji,
-                        is_default=False,
-                    )
-                    session.add(new_cat)
-
-            # Copy budgets (skip if pwa_user already has one for that category-by-name)
+            # 4. Copy budgets (skip if PWA user already has one for that category-by-name).
             pwa_budget_cat_names = {
                 c.name.lower()
                 for c in session.scalars(
@@ -1193,9 +1195,10 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 )
             }
             for budget in session.scalars(_select(_B).where(_B.user_id == existing.id)):
-                if budget.category.name.lower() in pwa_budget_cat_names:
+                cat_name = budget.category.name.lower()
+                if cat_name in pwa_budget_cat_names:
                     continue
-                match = pwa_cats.get((budget.category.name.lower(), TransactionType.EXPENSE))
+                match = pwa_cats.get((cat_name, TransactionType.EXPENSE))
                 if match is None:
                     continue
                 session.add(
