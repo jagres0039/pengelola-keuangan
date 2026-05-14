@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import APIRouter, HTTPException, status
 
 from pengelola_keuangan.api.deps import CurrentUser, DBSession
@@ -57,7 +59,7 @@ def upsert_budget(
             category_id=payload.category_id,
             category_name=cat.name,
             monthly_limit=payload.monthly_limit,
-            spent=cat.transactions[0].amount if cat.transactions else 0,  # type: ignore[arg-type]
+            spent=Decimal(0),
             remaining=payload.monthly_limit,
         )
     return BudgetResponse(
