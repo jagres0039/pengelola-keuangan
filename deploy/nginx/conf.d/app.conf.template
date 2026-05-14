@@ -35,9 +35,15 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header X-Frame-Options "DENY" always;
 
+    # Use Docker's embedded DNS so upstream IPs are re-resolved after container restarts.
+    # Pair with variables in proxy_pass below to disable nginx's startup-time DNS caching.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $upstream_api  http://api:8000;
+    set $upstream_web  http://web:3000;
+
     # API -> FastAPI backend
     location /api/ {
-        proxy_pass http://api:8000;
+        proxy_pass $upstream_api;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -49,7 +55,7 @@ server {
 
     # Everything else -> Next.js standalone server
     location / {
-        proxy_pass http://web:3000;
+        proxy_pass $upstream_web;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
