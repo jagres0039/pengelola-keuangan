@@ -34,9 +34,13 @@ class _ReceiptItemSchema(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str = Field(description="Nama barang / item / layanan.")
-    qty: float = Field(default=1.0, description="Kuantitas (jumlah unit). Default 1 kalau tidak terlihat.")
+    qty: float = Field(
+        default=1.0, description="Kuantitas (jumlah unit). Default 1 kalau tidak terlihat."
+    )
     unit_price: float = Field(default=0.0, description="Harga satuan. 0 kalau tidak ada.")
-    subtotal: float = Field(default=0.0, description="Subtotal baris (qty x unit_price). Wajib >= 0.")
+    subtotal: float = Field(
+        default=0.0, description="Subtotal baris (qty x unit_price). Wajib >= 0."
+    )
 
 
 class _ReceiptSchema(BaseModel):
@@ -247,9 +251,7 @@ def parse_receipt(
         unit_price = unit_price_raw if unit_price_raw and unit_price_raw > 0 else None
         if subtotal <= 0 and unit_price is not None:
             subtotal = unit_price * qty
-        items.append(
-            OCRItem(name=name, qty=qty, unit_price=unit_price, subtotal=subtotal)
-        )
+        items.append(OCRItem(name=name, qty=qty, unit_price=unit_price, subtotal=subtotal))
 
     return OCRResult(
         is_receipt=bool(parsed.is_receipt),
