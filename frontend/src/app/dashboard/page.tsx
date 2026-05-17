@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
-import { api, type Summary, type UserMe } from "@/lib/api";
+import { api, type LowBalanceStatus, type Summary, type UserMe } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 
 export default function DashboardPage() {
@@ -13,6 +13,7 @@ export default function DashboardPage() {
 
 function DashboardInner({ user }: { user: UserMe }) {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [lowBalance, setLowBalance] = useState<LowBalanceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,6 +21,12 @@ function DashboardInner({ user }: { user: UserMe }) {
       .get<Summary>("/summary")
       .then(setSummary)
       .catch((e: { detail?: string }) => setError(e.detail ?? "gagal load"));
+    api
+      .get<LowBalanceStatus>("/summary/low-balance")
+      .then(setLowBalance)
+      .catch(() => {
+        /* non-fatal, just hide banner */
+      });
   }, []);
 
   const monthName = summary
@@ -70,6 +77,22 @@ function DashboardInner({ user }: { user: UserMe }) {
       {error ? (
         <div className="mx-4 mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </div>
+      ) : null}
+
+      {lowBalance?.is_low ? (
+        <div className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800 shadow-sm">
+          <span aria-hidden="true" className="text-xl">⚠️</span>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">Saldo bulan ini menipis</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+              Saldo {formatMoney(lowBalance.balance, user.currency)} sudah di bawah
+              ambang {formatMoney(lowBalance.threshold, user.currency)}.
+              <Link href="/settings" className="ml-1 font-medium underline">
+                Atur ambang
+              </Link>
+            </p>
+          </div>
         </div>
       ) : null}
 

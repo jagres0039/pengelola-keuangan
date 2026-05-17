@@ -9,12 +9,34 @@ from fastapi import APIRouter, HTTPException, status
 from pengelola_keuangan.api.deps import CurrentUser, DBSession
 from pengelola_keuangan.api.schemas import (
     CategoryTotalResponse,
+    LowBalanceStatus,
     MonthlySummaryResponse,
 )
 from pengelola_keuangan.services import transactions as tx_svc
 from pengelola_keuangan.services.time_helpers import current_month
 
 router = APIRouter(prefix="/summary", tags=["summary"])
+
+
+@router.get("/low-balance", response_model=LowBalanceStatus)
+def get_low_balance(
+    user: CurrentUser,
+    session: DBSession,
+) -> LowBalanceStatus:
+    """Return whether the current month's balance is below the user's threshold."""
+    tz = user.timezone or "Asia/Jakarta"
+    y, m = current_month(tz)
+    summary = tx_svc.summarize_month(session, user.id, y, m, tz)
+    balance = summary.balance
+    threshold = user.low_balance_threshold
+    is_low = balance < threshold
+    return LowBalanceStatus(
+        is_low=is_low,
+        balance=balance,
+        threshold=threshold,
+        total_income=summary.total_income,
+        total_expense=summary.total_expense,
+    )
 
 
 @router.get("", response_model=MonthlySummaryResponse)

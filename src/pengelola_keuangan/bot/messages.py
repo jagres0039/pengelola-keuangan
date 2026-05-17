@@ -371,6 +371,7 @@ def receipt_preview(
     category_name: str,
     notes: str,
     tz_name: str,
+    items: list[tuple[str, Decimal, Decimal]] | None = None,
 ) -> str:
     """Preview before confirming a receipt-based transaction."""
     if occurred_at is not None:
@@ -380,13 +381,30 @@ def receipt_preview(
         when = "_(tanggal tidak terdeteksi, pakai sekarang)_"
     merchant_line = merchant if merchant else "_(merchant tidak terdeteksi)_"
     notes_line = f"\nCatatan: _{notes}_" if notes else ""
+
+    items_block = ""
+    if items:
+        shown = items[:10]
+        lines = []
+        for name, qty, subtotal in shown:
+            qty_str = f"{qty:g}" if qty != 1 else ""
+            qty_prefix = f"{qty_str}× " if qty_str else ""
+            lines.append(f"• {qty_prefix}{name} — {format_money(subtotal, currency)}")
+        more = (
+            f"\n_… +{len(items) - len(shown)} item lagi_"
+            if len(items) > len(shown)
+            else ""
+        )
+        items_block = f"\n\n🛒 *Item ({len(items)}):*\n" + "\n".join(lines) + more
+
     return (
         "🧾 *Struk Terbaca*\n\n"
         f"🏪 Merchant: {merchant_line}\n"
         f"📅 Tanggal: {when}\n"
         f"💰 Total: *{format_money(amount, currency)}*\n"
         f"📂 Kategori: *{category_name}*"
-        f"{notes_line}\n\n"
+        f"{notes_line}"
+        f"{items_block}\n\n"
         "Konfirmasi simpan sebagai pengeluaran?"
     )
 

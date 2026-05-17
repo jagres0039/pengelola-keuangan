@@ -39,6 +39,7 @@ def _user_to_response(user: User) -> UserResponse:
         timezone=user.timezone,
         currency=user.currency,
         telegram_linked=user.telegram_user_id is not None,
+        low_balance_threshold=user.low_balance_threshold,
     )
 
 
@@ -95,13 +96,15 @@ def me(user: CurrentUser) -> UserResponse:
 
 @router.patch("/me", response_model=UserResponse)
 def update_me(payload: UpdateUserRequest, user: CurrentUser, session: DBSession) -> UserResponse:
-    """Update profile fields (first_name / timezone / currency)."""
+    """Update profile fields (first_name / timezone / currency / low_balance_threshold)."""
     if payload.first_name is not None:
         user.first_name = payload.first_name.strip() or None
     if payload.timezone is not None:
         user.timezone = payload.timezone.strip()
     if payload.currency is not None:
         user.currency = payload.currency.upper().strip()
+    if payload.low_balance_threshold is not None:
+        user.low_balance_threshold = payload.low_balance_threshold
     session.flush()
     return _user_to_response(user)
 

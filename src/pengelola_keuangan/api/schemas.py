@@ -40,6 +40,7 @@ class UserResponse(BaseModel):
     timezone: str
     currency: str
     telegram_linked: bool
+    low_balance_threshold: Decimal
 
 
 class UpdateUserRequest(BaseModel):
@@ -48,6 +49,7 @@ class UpdateUserRequest(BaseModel):
     first_name: str | None = Field(default=None, max_length=128)
     timezone: str | None = Field(default=None, max_length=64)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    low_balance_threshold: Decimal | None = Field(default=None, ge=0)
 
 
 class CategoryResponse(BaseModel):
@@ -76,6 +78,25 @@ class CategoryUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
+class TransactionItemInput(BaseModel):
+    """A single line item when creating a transaction."""
+
+    name: str = Field(min_length=1, max_length=255)
+    qty: Decimal = Field(default=Decimal("1"), gt=0)
+    unit_price: Decimal | None = Field(default=None, ge=0)
+    subtotal: Decimal = Field(ge=0)
+
+
+class TransactionItemResponse(BaseModel):
+    """A line item on a transaction."""
+
+    id: int
+    name: str
+    qty: Decimal
+    unit_price: Decimal | None
+    subtotal: Decimal
+
+
 class TransactionCreate(BaseModel):
     """Create a new transaction."""
 
@@ -84,6 +105,7 @@ class TransactionCreate(BaseModel):
     category_id: int | None = None
     note: str | None = Field(default=None, max_length=255)
     occurred_at: datetime | None = None
+    items: list[TransactionItemInput] = Field(default_factory=list)
 
 
 class TransactionUpdate(BaseModel):
@@ -93,6 +115,7 @@ class TransactionUpdate(BaseModel):
     category_id: int | None = None
     note: str | None = Field(default=None, max_length=255)
     occurred_at: datetime | None = None
+    items: list[TransactionItemInput] | None = None
 
 
 class TransactionResponse(BaseModel):
@@ -105,6 +128,7 @@ class TransactionResponse(BaseModel):
     category_name: str | None
     note: str | None
     occurred_at: datetime
+    items: list[TransactionItemResponse] = Field(default_factory=list)
 
 
 class CategoryTotalResponse(BaseModel):
@@ -145,6 +169,15 @@ class BudgetCreate(BaseModel):
     monthly_limit: Decimal = Field(gt=0)
 
 
+class ReceiptOCRItem(BaseModel):
+    """An item parsed from a receipt by OCR."""
+
+    name: str
+    qty: Decimal
+    unit_price: Decimal | None
+    subtotal: Decimal
+
+
 class ReceiptOCRResponse(BaseModel):
     """OCR result from a receipt image."""
 
@@ -156,6 +189,54 @@ class ReceiptOCRResponse(BaseModel):
     suggested_category: str
     suggested_category_id: int | None
     notes: str
+    items: list[ReceiptOCRItem] = Field(default_factory=list)
+
+
+class LowBalanceStatus(BaseModel):
+    """Low-balance alert status for current month."""
+
+    is_low: bool
+    balance: Decimal
+    threshold: Decimal
+    total_income: Decimal
+    total_expense: Decimal
+
+
+class ImportPreviewRow(BaseModel):
+    """One row in an import preview."""
+
+    action: str
+    row_index: int | None = None
+    transaction_id: int | None = None
+    type: str
+    amount: Decimal
+    category_name: str
+    note: str | None
+    occurred_at: datetime | None
+
+
+class ImportPreviewResponse(BaseModel):
+    """Preview of an import: rows that would be created/updated/deleted plus errors."""
+
+    plan_id: str
+    to_create: list[ImportPreviewRow]
+    to_update: list[ImportPreviewRow]
+    to_delete: list[ImportPreviewRow]
+    errors: list[str]
+
+
+class ImportApplyRequest(BaseModel):
+    """Apply a previously-previewed import plan."""
+
+    plan_id: str
+
+
+class ImportApplyResponse(BaseModel):
+    """Result of applying an import plan."""
+
+    created: int
+    updated: int
+    deleted: int
 
 
 class LinkCodeResponse(BaseModel):

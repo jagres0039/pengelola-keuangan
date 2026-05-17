@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from pengelola_keuangan.api.deps import CurrentUser, DBSession
-from pengelola_keuangan.api.schemas import ReceiptOCRResponse
+from pengelola_keuangan.api.schemas import ReceiptOCRItem, ReceiptOCRResponse
 from pengelola_keuangan.config import get_settings
 from pengelola_keuangan.db.models import TransactionType
 from pengelola_keuangan.services import categories as cat_svc
@@ -94,4 +94,13 @@ async def parse_receipt(
         suggested_category=result.suggested_category,
         suggested_category_id=suggested_cat_id,
         notes=result.notes,
+        items=[
+            ReceiptOCRItem(
+                name=item.name,
+                qty=item.qty,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+            )
+            for item in result.items
+        ],
     )
