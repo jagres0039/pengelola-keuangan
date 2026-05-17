@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
-import { api, type ReceiptOCR, type UserMe } from "@/lib/api";
+import { api, type ReceiptOCR, type ReceiptOCRItem, type UserMe } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 
 export default function ReceiptPage() {
@@ -58,6 +58,12 @@ function ReceiptInner({ user }: { user: UserMe }) {
         category_id: result.suggested_category_id,
         note: editedNote.trim() || null,
         occurred_at: result.occurred_at,
+        items: result.items.map((it) => ({
+          name: it.name,
+          qty: it.qty,
+          unit_price: it.unit_price,
+          subtotal: it.subtotal,
+        })),
       });
       router.replace("/dashboard");
     } catch (e: unknown) {
@@ -72,7 +78,7 @@ function ReceiptInner({ user }: { user: UserMe }) {
       <header className="safe-top px-4 pb-2 pt-4">
         <h1 className="text-xl font-bold">Foto Struk (OCR)</h1>
         <p className="text-sm text-slate-500">
-          Pakai kamera HP, AI auto-extract merchant + total + tanggal.
+          Pakai kamera HP, AI auto-extract merchant + total + tanggal + detail item.
         </p>
       </header>
 
@@ -173,6 +179,21 @@ function ReceiptInner({ user }: { user: UserMe }) {
               )}
             </p>
           </div>
+          {result.items.length > 0 ? (
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">
+                Detail item ({result.items.length})
+              </label>
+              <ul className="space-y-1.5 rounded-xl bg-slate-50 px-3 py-2">
+                {result.items.map((it, i) => (
+                  <ItemRow key={i} item={it} currency={user.currency} />
+                ))}
+              </ul>
+              <p className="mt-1 text-xs text-slate-400">
+                Item-item ini akan disimpan bareng transaksi.
+              </p>
+            </div>
+          ) : null}
           <button
             onClick={save}
             disabled={busy}
@@ -184,4 +205,34 @@ function ReceiptInner({ user }: { user: UserMe }) {
       ) : null}
     </PageWithNav>
   );
+}
+
+function ItemRow({ item, currency }: { item: ReceiptOCRItem; currency: string }) {
+  const qty = Number(item.qty);
+  const showQty = Number.isFinite(qty) && qty !== 1;
+  const unit = item.unit_price ? Number(item.unit_price) : null;
+  const showUnit = unit !== null && Number.isFinite(unit) && unit > 0;
+  return (
+    <li className="flex items-start justify-between gap-2 text-sm">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-slate-700">{item.name}</p>
+        {showQty || showUnit ? (
+          <p className="text-xs text-slate-400">
+            {showQty ? `${formatQty(item.qty)}×` : ""}
+            {showUnit && item.unit_price ? formatMoney(item.unit_price, currency) : ""}
+          </p>
+        ) : null}
+      </div>
+      <span className="shrink-0 font-medium text-slate-700">
+        {formatMoney(item.subtotal, currency)}
+      </span>
+    </li>
+  );
+}
+
+function formatQty(qty: string): string {
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return qty;
+  if (Number.isInteger(n)) return String(n);
+  return n.toLocaleString("id-ID", { maximumFractionDigits: 3 });
 }
