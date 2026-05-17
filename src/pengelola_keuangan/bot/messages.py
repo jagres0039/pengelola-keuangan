@@ -390,11 +390,7 @@ def receipt_preview(
             qty_str = f"{qty:g}" if qty != 1 else ""
             qty_prefix = f"{qty_str}× " if qty_str else ""
             lines.append(f"• {qty_prefix}{name} — {format_money(subtotal, currency)}")
-        more = (
-            f"\n_… +{len(items) - len(shown)} item lagi_"
-            if len(items) > len(shown)
-            else ""
-        )
+        more = f"\n_… +{len(items) - len(shown)} item lagi_" if len(items) > len(shown) else ""
         items_block = f"\n\n🛒 *Item ({len(items)}):*\n" + "\n".join(lines) + more
 
     return (
