@@ -56,6 +56,9 @@ class User(Base):
     currency: Mapped[str] = mapped_column(String(3), default="IDR", nullable=False)
     reminder_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reminder_hour: Mapped[int] = mapped_column(default=20, nullable=False)
+    low_balance_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("100000"), nullable=False
+    )
     link_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     link_code_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -128,6 +131,31 @@ class Transaction(Base):
 
     user: Mapped[User] = relationship(back_populates="transactions")
     category: Mapped[Category | None] = relationship(back_populates="transactions")
+    items: Mapped[list[TransactionItem]] = relationship(
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        order_by="TransactionItem.id",
+    )
+
+
+class TransactionItem(Base):
+    """A single line item belonging to a transaction (e.g. one product on a receipt)."""
+
+    __tablename__ = "transaction_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    qty: Mapped[Decimal] = mapped_column(Numeric(18, 3), default=Decimal("1"), nullable=False)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    transaction: Mapped[Transaction] = relationship(back_populates="items")
 
 
 class Budget(Base):

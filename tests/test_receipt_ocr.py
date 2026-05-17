@@ -187,6 +187,7 @@ def test_ocr_result_is_valid() -> None:
         suggested_category="",
         notes="",
         raw_text="",
+        items=[],
     )
     assert valid.is_valid() is True
 
@@ -199,6 +200,7 @@ def test_ocr_result_is_valid() -> None:
         suggested_category="",
         notes="",
         raw_text="",
+        items=[],
     )
     assert invalid_zero.is_valid() is False
 
@@ -211,5 +213,66 @@ def test_ocr_result_is_valid() -> None:
         suggested_category="",
         notes="",
         raw_text="",
+        items=[],
     )
     assert invalid_not_receipt.is_valid() is False
+
+
+def test_parse_receipt_extracts_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "is_receipt": True,
+        "merchant": "Indomaret",
+        "date_iso": "2026-05-13",
+        "total_amount": 30500.0,
+        "currency": "IDR",
+        "suggested_category": "Belanja",
+        "notes": "3 item",
+        "items": [
+            {"name": "Indomie Goreng", "qty": 3, "unit_price": 4000, "subtotal": 12000},
+            {"name": "Aqua 600ml", "qty": 2, "unit_price": 4000, "subtotal": 8000},
+            {"name": "Sabun", "qty": 1, "unit_price": 10500, "subtotal": 10500},
+        ],
+    }
+    _patch_client(monkeypatch, payload)
+    result = receipt_ocr.parse_receipt(b"img", api_key="k")
+    assert len(result.items) == 3
+    assert result.items[0].name == "Indomie Goreng"
+    assert result.items[0].qty == Decimal("3")
+    assert result.items[0].subtotal == Decimal("12000")
+    assert result.items[1].name == "Aqua 600ml"
+    assert result.items[2].subtotal == Decimal("10500")
+
+
+def test_parse_receipt_handles_missing_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "is_receipt": True,
+        "merchant": "X",
+        "date_iso": "2026-05-13",
+        "total_amount": 50000,
+        "currency": "IDR",
+        "suggested_category": "",
+        "notes": "",
+    }
+    _patch_client(monkeypatch, payload)
+    result = receipt_ocr.parse_receipt(b"img", api_key="k")
+    assert result.items == []
+
+
+def test_parse_receipt_item_skips_empty_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "is_receipt": True,
+        "merchant": "X",
+        "date_iso": "2026-05-13",
+        "total_amount": 50000,
+        "currency": "IDR",
+        "suggested_category": "",
+        "notes": "",
+        "items": [
+            {"name": "", "qty": 1, "unit_price": 5000, "subtotal": 5000},
+            {"name": "Roti", "qty": 1, "unit_price": 8000, "subtotal": 8000},
+        ],
+    }
+    _patch_client(monkeypatch, payload)
+    result = receipt_ocr.parse_receipt(b"img", api_key="k")
+    assert len(result.items) == 1
+    assert result.items[0].name == "Roti"
