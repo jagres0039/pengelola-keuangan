@@ -11,6 +11,7 @@ from pengelola_keuangan.db.defaults import (
     DEFAULT_INCOME_CATEGORIES,
 )
 from pengelola_keuangan.db.models import Category, TransactionType, User
+from pengelola_keuangan.services.subscriptions import ensure_trial
 
 
 def get_user_by_telegram_id(session: Session, telegram_user_id: int) -> User | None:
@@ -48,14 +49,15 @@ def ensure_user(
         timezone=settings.default_timezone,
         currency=settings.default_currency,
     )
+    ensure_trial(user)
     session.add(user)
     session.flush()
-    _seed_default_categories(session, user)
+    seed_default_categories(session, user)
     session.flush()
     return user, True
 
 
-def _seed_default_categories(session: Session, user: User) -> None:
+def seed_default_categories(session: Session, user: User) -> None:
     """Seed the user's default categories."""
     for name, emoji in DEFAULT_INCOME_CATEGORIES:
         session.add(

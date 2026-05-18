@@ -7,9 +7,9 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from pengelola_keuangan.db.models import Category, Transaction, TransactionType
+from pengelola_keuangan.db.models import Category, Transaction, TransactionItem, TransactionType
 from pengelola_keuangan.services.time_helpers import (
     current_month,
     get_zoneinfo,
@@ -17,6 +17,16 @@ from pengelola_keuangan.services.time_helpers import (
     now_in,
     shift_months,
 )
+
+
+@dataclass(frozen=True)
+class ItemInput:
+    """Input for a single line item when creating a transaction."""
+
+    name: str
+    qty: Decimal
+    unit_price: Decimal | None
+    subtotal: Decimal
 
 
 @dataclass(frozen=True)
@@ -54,8 +64,9 @@ def create_transaction(
     note: str | None,
     occurred_at: datetime | None = None,
     user_tz: str = "Asia/Jakarta",
+    items: list[ItemInput] | None = None,
 ) -> Transaction:
-    """Insert a new transaction."""
+    """Insert a new transaction with optional line items."""
     transaction = Transaction(
         user_id=user_id,
         type=transaction_type,
@@ -64,15 +75,49 @@ def create_transaction(
         note=note,
         occurred_at=occurred_at or now_in(user_tz),
     )
+    if items:
+        transaction.items = [
+            TransactionItem(
+                name=item.name,
+                qty=item.qty,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+            )
+            for item in items
+        ]
     session.add(transaction)
     session.flush()
     return transaction
 
 
+def replace_items(
+    session: Session,
+    user_id: int,
+    transaction_id: int,
+    items: list[ItemInput],
+) -> Transaction | None:
+    """Replace all items on a transaction. Returns the transaction (None if not found)."""
+    transaction = get_transaction(session, user_id, transaction_id)
+    if transaction is None:
+        return None
+    transaction.items = [
+        TransactionItem(
+            name=item.name,
+            qty=item.qty,
+            unit_price=item.unit_price,
+            subtotal=item.subtotal,
+        )
+        for item in items
+    ]
+    session.flush()
+    return transaction
+
+
 def get_transaction(session: Session, user_id: int, transaction_id: int) -> Transaction | None:
-    """Get a single transaction scoped to a user."""
+    """Get a single transaction scoped to a user (with items eagerly loaded)."""
     stmt = (
         select(Transaction)
+        .options(selectinload(Transaction.items))
         .where(Transaction.id == transaction_id)
         .where(Transaction.user_id == user_id)
     )
@@ -90,9 +135,10 @@ def delete_transaction(session: Session, user_id: int, transaction_id: int) -> T
 
 
 def list_recent(session: Session, user_id: int, limit: int = 10) -> list[Transaction]:
-    """Return the user's most recent transactions."""
+    """Return the user's most recent transactions (items eagerly loaded)."""
     stmt = (
         select(Transaction)
+        .options(selectinload(Transaction.items))
         .where(Transaction.user_id == user_id)
         .order_by(desc(Transaction.occurred_at), desc(Transaction.id))
         .limit(limit)

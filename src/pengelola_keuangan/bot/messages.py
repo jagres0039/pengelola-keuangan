@@ -19,6 +19,10 @@ from pengelola_keuangan.services.formatting import (
     format_month,
     percentage,
 )
+from pengelola_keuangan.services.subscriptions import (
+    MONTHLY_PRICE_IDR,
+    SubscriptionStatus,
+)
 from pengelola_keuangan.services.time_helpers import to_user_tz
 from pengelola_keuangan.services.transactions import MonthlySummary
 
@@ -74,6 +78,10 @@ HELP_TEXT = (
     "*Export / Import*\n"
     "`/export csv` atau `/export xlsx`\n"
     "Kirim file .xlsx ke chat ini buat import\n\n"
+    "*Struk Pembayaran (OCR)*\n"
+    "Kirim foto struk ke chat — bot bakal baca otomatis,\n"
+    "tampilkan preview (total, merchant, tanggal, kategori),\n"
+    "lalu konfirmasi sebelum simpan.\n\n"
     "*Pengaturan*\n"
     "`/timezone <IANA>` — contoh: `Asia/Jakarta`, `Asia/Makassar`\n"
     "`/currency <CODE>` — contoh: `IDR`, `USD`\n"
@@ -329,3 +337,174 @@ def reminder_status(enabled: bool, hour: int) -> str:
 def now_label(dt: datetime) -> str:
     """Human-friendly current time label."""
     return dt.strftime("%d %b %Y %H:%M")
+
+
+def receipt_disabled() -> str:
+    """Shown when GEMINI_API_KEY is not configured but the user sent a photo."""
+    return (
+        "❌ Fitur baca struk belum dikonfigurasi.\n"
+        "Admin bot harus set `GEMINI_API_KEY` di environment dulu.\n\n"
+        "Sementara, lo bisa catat manual: `/out 35000 belanja`."
+    )
+
+
+def receipt_scanning() -> str:
+    """Status while the receipt is being processed."""
+    return "🔍 Lagi baca struk… ini cuma butuh beberapa detik."
+
+
+def receipt_not_a_receipt() -> str:
+    """Shown when Gemini says the image is not a receipt."""
+    return (
+        "🤔 Gambar ini sepertinya bukan struk pembayaran.\n"
+        "Coba kirim foto struk yang lebih jelas, atau catat manual pake `/out`."
+    )
+
+
+def receipt_parse_failed(detail: str) -> str:
+    """Shown when OCR fails."""
+    return f"❌ Gagal baca struk: {detail}\n\nCoba foto ulang yang lebih jelas atau catat manual pake `/out`."
+
+
+def receipt_preview(
+    *,
+    merchant: str,
+    amount: Decimal,
+    currency: str,
+    occurred_at: datetime | None,
+    category_name: str,
+    notes: str,
+    tz_name: str,
+    items: list[tuple[str, Decimal, Decimal]] | None = None,
+) -> str:
+    """Preview before confirming a receipt-based transaction."""
+    if occurred_at is not None:
+        local_dt = to_user_tz(occurred_at, tz_name)
+        when = local_dt.strftime("%d %b %Y %H:%M")
+    else:
+        when = "_(tanggal tidak terdeteksi, pakai sekarang)_"
+    merchant_line = merchant if merchant else "_(merchant tidak terdeteksi)_"
+    notes_line = f"\nCatatan: _{notes}_" if notes else ""
+
+    items_block = ""
+    if items:
+        shown = items[:10]
+        lines = []
+        for name, qty, subtotal in shown:
+            qty_str = f"{qty:g}" if qty != 1 else ""
+            qty_prefix = f"{qty_str}× " if qty_str else ""
+            lines.append(f"• {qty_prefix}{name} — {format_money(subtotal, currency)}")
+        more = f"\n_… +{len(items) - len(shown)} item lagi_" if len(items) > len(shown) else ""
+        items_block = f"\n\n🛒 *Item ({len(items)}):*\n" + "\n".join(lines) + more
+
+    return (
+        "🧾 *Struk Terbaca*\n\n"
+        f"🏪 Merchant: {merchant_line}\n"
+        f"📅 Tanggal: {when}\n"
+        f"💰 Total: *{format_money(amount, currency)}*\n"
+        f"📂 Kategori: *{category_name}*"
+        f"{notes_line}"
+        f"{items_block}\n\n"
+        "Konfirmasi simpan sebagai pengeluaran?"
+    )
+
+
+def receipt_saved(transaction: Transaction, category: Category | None, currency: str) -> str:
+    """Confirmation after a receipt is saved as a transaction."""
+    cat = category.name if category else "—"
+    note = f" — _{transaction.note}_" if transaction.note else ""
+    return (
+        f"✅ Struk disimpan sebagai pengeluaran #{transaction.id}.\n"
+        f"-{format_money(transaction.amount, currency)} • {cat}{note}"
+    )
+
+
+def receipt_cancelled() -> str:
+    """Shown when the user cancels the receipt preview."""
+    return "❌ Struk dibatalkan, gak disimpan."
+
+
+# --------------------------------------------------------------------------- #
+# Subscription / billing
+# --------------------------------------------------------------------------- #
+
+
+def _format_expires(status: SubscriptionStatus) -> str:
+    if status.expires_at is None:
+        return "—"
+    return status.expires_at.strftime("%d %b %Y")
+
+
+def billing_status_text(status: SubscriptionStatus, instructions: str) -> str:
+    """Status + payment instructions, shown for /billing."""
+    if status.is_paid:
+        header = (
+            f"✅ *Subscription aktif* sampai {_format_expires(status)}\n"
+            f"({status.days_left} hari lagi)"
+        )
+    elif status.is_trial:
+        header = (
+            f"🆓 *Trial gratis* sampai {_format_expires(status)}\n({status.days_left} hari lagi)"
+        )
+    else:
+        header = "🔒 *Subscription kadaluarsa* — mode read-only.\nLo masih bisa lihat data, tapi gak bisa catat baru."
+
+    pending_note = (
+        "\n\n⏳ Ada pembayaran lo yang lagi nunggu verifikasi admin."
+        if status.has_pending_payment
+        else ""
+    )
+
+    price = format_money(MONTHLY_PRICE_IDR, "IDR")
+    return (
+        f"{header}{pending_note}\n\n"
+        f"💳 *Harga*: {price} / 30 hari\n\n"
+        f"📌 *Cara bayar*:\n{instructions.strip()}\n\n"
+        "Setelah transfer, lapor ke admin dengan:\n"
+        "`/pay <nominal> [metode] [catatan]`\n"
+        "Contoh: `/pay 5000 bca transfer atas nama Budi`"
+    )
+
+
+def subscription_expired_text(status: SubscriptionStatus) -> str:
+    """Shown when a user tries to write while expired."""
+    _ = status
+    return (
+        "🔒 *Subscription kadaluarsa*\n\n"
+        "Lo masih bisa lihat data lama, tapi gak bisa catat baru.\n"
+        f"Bayar {format_money(MONTHLY_PRICE_IDR, 'IDR')} buat lanjut 30 hari.\n\n"
+        "Ketik `/billing` buat info pembayaran."
+    )
+
+
+def payment_submitted_text(payment_id: int, amount: Decimal, method: str) -> str:
+    """Shown after the user submits /pay."""
+    return (
+        f"✅ Pembayaran #{payment_id} terkirim.\n"
+        f"Nominal: {format_money(amount, 'IDR')} • Metode: {method}\n\n"
+        "Admin bakal verifikasi dan aktifin subscription lo. "
+        "Lo bakal dapet notifikasi pas udah aktif."
+    )
+
+
+def payment_approved_text(amount: Decimal, period_end: datetime | None) -> str:
+    """DM to user when admin approves their payment."""
+    until = period_end.strftime("%d %b %Y") if period_end else "—"
+    return (
+        f"🎉 Pembayaran {format_money(amount, 'IDR')} disetujui!\n"
+        f"Subscription lo aktif sampai *{until}*. Makasih bro 🙏"
+    )
+
+
+def payment_rejected_text(amount: Decimal, reason: str) -> str:
+    """DM to user when admin rejects their payment."""
+    return (
+        f"❌ Pembayaran {format_money(amount, 'IDR')} ditolak.\n"
+        f"Alasan: _{reason}_\n\n"
+        "Kalau ada kesalahan, hubungi admin atau coba kirim ulang via `/pay`."
+    )
+
+
+def admin_only_text() -> str:
+    """Shown when a non-admin tries an admin command."""
+    return "❌ Perintah ini cuma buat admin."
