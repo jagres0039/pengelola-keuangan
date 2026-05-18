@@ -145,8 +145,10 @@ def approve_payment(
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     target_user = payment.user
-    current_end = _aware(target_user.subscription_ends_at)
-    period_start = current_end if current_end is not None and current_end > moment else moment
+    trial_end = _aware(target_user.trial_ends_at)
+    sub_end = _aware(target_user.subscription_ends_at)
+    candidates = [d for d in (trial_end, sub_end) if d is not None and d > moment]
+    period_start = max(candidates) if candidates else moment
     period_end = period_start + timedelta(days=SUBSCRIPTION_DAYS)
 
     payment.status = PaymentStatus.APPROVED

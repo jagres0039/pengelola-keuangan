@@ -92,15 +92,29 @@ def test_submit_payment_rejects_invalid_amount(session: Session) -> None:
         )
 
 
-def test_approve_payment_extends_subscription(session: Session) -> None:
+def test_approve_payment_stacks_on_remaining_trial(session: Session) -> None:
     now = datetime(2026, 5, 17, tzinfo=UTC)
-    user = _make_user(session, trial_ends_at=now + timedelta(days=2))
+    trial_end = now + timedelta(days=2)
+    user = _make_user(session, trial_ends_at=trial_end)
     admin = _make_user(session, email="admin@example.com", is_admin=True)
     payment = sub_svc.submit_payment(
         session=session, user=user, amount=Decimal("5000"), method="bank_transfer", proof_note=None
     )
     sub_svc.approve_payment(session=session, payment=payment, admin=admin, now=now)
     assert payment.status == PaymentStatus.APPROVED
+    assert payment.period_start == trial_end
+    assert user.subscription_ends_at == trial_end + timedelta(days=30)
+
+
+def test_approve_payment_uses_now_when_trial_already_expired(session: Session) -> None:
+    now = datetime(2026, 5, 17, tzinfo=UTC)
+    user = _make_user(session, trial_ends_at=now - timedelta(days=1))
+    admin = _make_user(session, email="admin@example.com", is_admin=True)
+    payment = sub_svc.submit_payment(
+        session=session, user=user, amount=Decimal("5000"), method="bank_transfer", proof_note=None
+    )
+    sub_svc.approve_payment(session=session, payment=payment, admin=admin, now=now)
+    assert payment.period_start == now
     assert user.subscription_ends_at == now + timedelta(days=30)
 
 
