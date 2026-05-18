@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 
-from pengelola_keuangan.api.deps import CurrentUser, DBSession
+from pengelola_keuangan.api.deps import CurrentUser, CurrentUserCanWrite, DBSession
 from pengelola_keuangan.api.schemas import (
     ImportApplyRequest,
     ImportApplyResponse,
@@ -176,7 +176,7 @@ async def import_preview(
 @router.post("/import/apply", response_model=ImportApplyResponse)
 def import_apply(
     payload: ImportApplyRequest,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> ImportApplyResponse:
     """Apply a previously-previewed import plan."""

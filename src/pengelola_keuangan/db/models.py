@@ -63,6 +63,11 @@ class User(Base):
     link_code_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    subscription_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -78,6 +83,11 @@ class User(Base):
     )
     recurring: Mapped[list[Recurring]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    payments: Mapped[list[Payment]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="Payment.user_id",
     )
 
 
@@ -206,3 +216,42 @@ class Recurring(Base):
 
     user: Mapped[User] = relationship(back_populates="recurring")
     category: Mapped[Category | None] = relationship()
+
+
+class PaymentStatus(StrEnum):
+    """Status of a manual subscription payment claim."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class Payment(Base):
+    """A user-submitted subscription payment claim awaiting admin verification."""
+
+    __tablename__ = "payments"
+    __table_args__ = (Index("ix_payments_user_status", "user_id", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    proof_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[PaymentStatus] = mapped_column(
+        String(16), default=PaymentStatus.PENDING, nullable=False
+    )
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="payments", foreign_keys=[user_id])
+    decided_by: Mapped[User | None] = relationship(foreign_keys=[decided_by_user_id])

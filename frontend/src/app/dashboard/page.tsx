@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
-import { api, type LowBalanceStatus, type Summary, type UserMe } from "@/lib/api";
+import {
+  api,
+  type LowBalanceStatus,
+  type SubscriptionStatus,
+  type Summary,
+  type UserMe,
+} from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 
 export default function DashboardPage() {
@@ -14,6 +20,7 @@ export default function DashboardPage() {
 function DashboardInner({ user }: { user: UserMe }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [lowBalance, setLowBalance] = useState<LowBalanceStatus | null>(null);
+  const [sub, setSub] = useState<SubscriptionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,6 +33,12 @@ function DashboardInner({ user }: { user: UserMe }) {
       .then(setLowBalance)
       .catch(() => {
         /* non-fatal, just hide banner */
+      });
+    api
+      .get<SubscriptionStatus>("/billing/status")
+      .then(setSub)
+      .catch(() => {
+        /* non-fatal */
       });
   }, []);
 
@@ -78,6 +91,37 @@ function DashboardInner({ user }: { user: UserMe }) {
         <div className="mx-4 mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </div>
+      ) : null}
+
+      {sub && !sub.can_write ? (
+        <Link
+          href="/billing"
+          className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-800 shadow-sm"
+        >
+          <span aria-hidden="true" className="text-xl">🔒</span>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">Subscription kadaluarsa — mode read-only</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-rose-700">
+              Lo masih bisa lihat data lama, tapi gak bisa catat transaksi baru.
+              Bayar Rp 5.000 untuk lanjut 30 hari →
+            </p>
+          </div>
+        </Link>
+      ) : sub && sub.state === "trial" && sub.days_left <= 3 ? (
+        <Link
+          href="/billing"
+          className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-800 shadow-sm"
+        >
+          <span aria-hidden="true" className="text-xl">⏳</span>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold">
+              Trial tersisa {sub.days_left} hari
+            </p>
+            <p className="mt-0.5 text-xs leading-relaxed text-sky-700">
+              Perpanjang Rp 5.000 untuk lanjut 30 hari →
+            </p>
+          </div>
+        </Link>
       ) : null}
 
       {lowBalance?.is_low ? (

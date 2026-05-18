@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
@@ -11,6 +12,7 @@ import {
   type ImportApplyResponse,
   type ImportPreviewResponse,
   type LinkCode,
+  type SubscriptionStatus,
   type UserMe,
 } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
@@ -31,6 +33,13 @@ function SettingsInner({ user }: { user: UserMe }) {
   const [thBusy, setThBusy] = useState(false);
   const [thMsg, setThMsg] = useState<string | null>(null);
   const [thErr, setThErr] = useState<string | null>(null);
+
+  const [sub, setSub] = useState<SubscriptionStatus | null>(null);
+  useEffect(() => {
+    api.get<SubscriptionStatus>("/billing/status").then(setSub).catch(() => {
+      /* non-fatal */
+    });
+  }, []);
 
   // Excel export / import
   const [exportBusy, setExportBusy] = useState(false);
@@ -181,6 +190,38 @@ function SettingsInner({ user }: { user: UserMe }) {
           <p className="text-slate-500">Timezone</p>
           <p className="font-medium">{user.timezone}</p>
         </div>
+      </section>
+
+      <section className="mx-4 mt-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Subscription
+          </h2>
+          {sub ? <SubBadge sub={sub} /> : null}
+        </div>
+        <p className="text-xs text-slate-500">
+          Rp 5.000 / 30 hari. 14 hari pertama gratis. Setelah masa berakhir, akun
+          jadi read-only (lihat data lama OK, tapi gak bisa catat baru) sampai
+          perpanjang.
+        </p>
+        <Link
+          href="/billing"
+          className="block w-full rounded-xl bg-brand-600 px-4 py-3 text-center text-sm font-semibold text-white shadow"
+        >
+          {sub?.state === "expired"
+            ? "Perpanjang sekarang"
+            : sub?.has_pending_payment
+              ? "Lihat status pembayaran"
+              : "Kelola subscription"}
+        </Link>
+        {user.is_admin ? (
+          <Link
+            href="/admin/payments"
+            className="block w-full rounded-xl bg-slate-100 px-4 py-3 text-center text-sm font-semibold text-slate-700"
+          >
+            🛡️ Admin: verifikasi pembayaran
+          </Link>
+        ) : null}
       </section>
 
       <section className="mx-4 mt-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm">
@@ -456,5 +497,25 @@ function PreviewGroup({
         ) : null}
       </ul>
     </div>
+  );
+}
+
+function SubBadge({ sub }: { sub: SubscriptionStatus }) {
+  const tone =
+    sub.state === "active"
+      ? "bg-emerald-100 text-emerald-700"
+      : sub.state === "trial"
+        ? "bg-sky-100 text-sky-700"
+        : "bg-rose-100 text-rose-700";
+  const label =
+    sub.state === "active"
+      ? `Aktif · ${sub.days_left}h`
+      : sub.state === "trial"
+        ? `Trial · ${sub.days_left}h`
+        : "Expired";
+  return (
+    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>
+      {label}
+    </span>
   );
 }

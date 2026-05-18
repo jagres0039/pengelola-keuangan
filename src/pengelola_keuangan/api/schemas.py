@@ -41,6 +41,7 @@ class UserResponse(BaseModel):
     currency: str
     telegram_linked: bool
     low_balance_threshold: Decimal
+    is_admin: bool = False
 
 
 class UpdateUserRequest(BaseModel):
@@ -244,3 +245,54 @@ class LinkCodeResponse(BaseModel):
 
     code: str
     expires_at: datetime
+
+
+class SubscriptionStatusResponse(BaseModel):
+    """Current subscription state for the authenticated user."""
+
+    state: str
+    active: bool
+    can_write: bool
+    expires_at: datetime | None
+    days_left: int
+    has_pending_payment: bool
+    monthly_price: Decimal
+    currency: str
+    billing_instructions: str
+
+
+class PaymentSubmitRequest(BaseModel):
+    """User-submitted manual payment claim."""
+
+    amount: Decimal = Field(gt=0)
+    method: str = Field(min_length=1, max_length=32)
+    proof_note: str | None = Field(default=None, max_length=500)
+
+
+class PaymentResponse(BaseModel):
+    """A payment row (user view)."""
+
+    id: int
+    amount: Decimal
+    method: str
+    proof_note: str | None
+    status: str
+    period_start: datetime | None
+    period_end: datetime | None
+    decided_at: datetime | None
+    rejection_reason: str | None
+    created_at: datetime
+
+
+class AdminPaymentResponse(PaymentResponse):
+    """A payment row enriched with the requesting user's email/first_name (admin view)."""
+
+    user_id: int
+    user_email: str | None
+    user_first_name: str | None
+
+
+class PaymentRejectRequest(BaseModel):
+    """Reason for rejecting a payment."""
+
+    reason: str = Field(min_length=1, max_length=255)

@@ -25,6 +25,7 @@ from pengelola_keuangan.api.security import (
 )
 from pengelola_keuangan.config import get_settings
 from pengelola_keuangan.db.models import User
+from pengelola_keuangan.services.subscriptions import ensure_trial
 from pengelola_keuangan.services.users import seed_default_categories
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -40,6 +41,7 @@ def _user_to_response(user: User) -> UserResponse:
         currency=user.currency,
         telegram_linked=user.telegram_user_id is not None,
         low_balance_threshold=user.low_balance_threshold,
+        is_admin=user.is_admin,
     )
 
 
@@ -61,6 +63,7 @@ def register(payload: RegisterRequest, session: DBSession) -> TokenResponse:
         timezone=settings.default_timezone,
         currency=settings.default_currency,
     )
+    ensure_trial(user)
     session.add(user)
     session.flush()
     seed_default_categories(session, user)

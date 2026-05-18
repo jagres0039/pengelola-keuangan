@@ -19,6 +19,10 @@ from pengelola_keuangan.services.formatting import (
     format_month,
     percentage,
 )
+from pengelola_keuangan.services.subscriptions import (
+    MONTHLY_PRICE_IDR,
+    SubscriptionStatus,
+)
 from pengelola_keuangan.services.time_helpers import to_user_tz
 from pengelola_keuangan.services.transactions import MonthlySummary
 
@@ -418,3 +422,89 @@ def receipt_saved(transaction: Transaction, category: Category | None, currency:
 def receipt_cancelled() -> str:
     """Shown when the user cancels the receipt preview."""
     return "❌ Struk dibatalkan, gak disimpan."
+
+
+# --------------------------------------------------------------------------- #
+# Subscription / billing
+# --------------------------------------------------------------------------- #
+
+
+def _format_expires(status: SubscriptionStatus) -> str:
+    if status.expires_at is None:
+        return "—"
+    return status.expires_at.strftime("%d %b %Y")
+
+
+def billing_status_text(status: SubscriptionStatus, instructions: str) -> str:
+    """Status + payment instructions, shown for /billing."""
+    if status.is_paid:
+        header = (
+            f"✅ *Subscription aktif* sampai {_format_expires(status)}\n"
+            f"({status.days_left} hari lagi)"
+        )
+    elif status.is_trial:
+        header = (
+            f"🆓 *Trial gratis* sampai {_format_expires(status)}\n({status.days_left} hari lagi)"
+        )
+    else:
+        header = "🔒 *Subscription kadaluarsa* — mode read-only.\nLo masih bisa lihat data, tapi gak bisa catat baru."
+
+    pending_note = (
+        "\n\n⏳ Ada pembayaran lo yang lagi nunggu verifikasi admin."
+        if status.has_pending_payment
+        else ""
+    )
+
+    price = format_money(MONTHLY_PRICE_IDR, "IDR")
+    return (
+        f"{header}{pending_note}\n\n"
+        f"💳 *Harga*: {price} / 30 hari\n\n"
+        f"📌 *Cara bayar*:\n{instructions.strip()}\n\n"
+        "Setelah transfer, lapor ke admin dengan:\n"
+        "`/pay <nominal> [metode] [catatan]`\n"
+        "Contoh: `/pay 5000 bca transfer atas nama Budi`"
+    )
+
+
+def subscription_expired_text(status: SubscriptionStatus) -> str:
+    """Shown when a user tries to write while expired."""
+    _ = status
+    return (
+        "🔒 *Subscription kadaluarsa*\n\n"
+        "Lo masih bisa lihat data lama, tapi gak bisa catat baru.\n"
+        f"Bayar {format_money(MONTHLY_PRICE_IDR, 'IDR')} buat lanjut 30 hari.\n\n"
+        "Ketik `/billing` buat info pembayaran."
+    )
+
+
+def payment_submitted_text(payment_id: int, amount: Decimal, method: str) -> str:
+    """Shown after the user submits /pay."""
+    return (
+        f"✅ Pembayaran #{payment_id} terkirim.\n"
+        f"Nominal: {format_money(amount, 'IDR')} • Metode: {method}\n\n"
+        "Admin bakal verifikasi dan aktifin subscription lo. "
+        "Lo bakal dapet notifikasi pas udah aktif."
+    )
+
+
+def payment_approved_text(amount: Decimal, period_end: datetime | None) -> str:
+    """DM to user when admin approves their payment."""
+    until = period_end.strftime("%d %b %Y") if period_end else "—"
+    return (
+        f"🎉 Pembayaran {format_money(amount, 'IDR')} disetujui!\n"
+        f"Subscription lo aktif sampai *{until}*. Makasih bro 🙏"
+    )
+
+
+def payment_rejected_text(amount: Decimal, reason: str) -> str:
+    """DM to user when admin rejects their payment."""
+    return (
+        f"❌ Pembayaran {format_money(amount, 'IDR')} ditolak.\n"
+        f"Alasan: _{reason}_\n\n"
+        "Kalau ada kesalahan, hubungi admin atau coba kirim ulang via `/pay`."
+    )
+
+
+def admin_only_text() -> str:
+    """Shown when a non-admin tries an admin command."""
+    return "❌ Perintah ini cuma buat admin."

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from pengelola_keuangan.api.security import decode_access_token
 from pengelola_keuangan.db.models import User
 from pengelola_keuangan.db.session import get_session_factory
+from pengelola_keuangan.services.subscriptions import get_status
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -65,3 +66,30 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_active_subscription(user: CurrentUser, session: DBSession) -> User:
+    """FastAPI dependency: same as CurrentUser but 402s if user can't write (trial expired)."""
+    sub = get_status(user, session)
+    if not sub.can_write:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="subscription kadaluarsa. Mohon bayar untuk lanjut catat transaksi.",
+        )
+    return user
+
+
+CurrentUserCanWrite = Annotated[User, Depends(require_active_subscription)]
+
+
+def require_admin(user: CurrentUser) -> User:
+    """FastAPI dependency: 403 if user is not an admin."""
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="admin only",
+        )
+    return user
+
+
+CurrentAdmin = Annotated[User, Depends(require_admin)]

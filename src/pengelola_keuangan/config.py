@@ -69,6 +69,18 @@ class Settings(BaseSettings):
             "'*' = boleh semua (dev). Production set ke domain PWA lo."
         ),
     )
+    billing_instructions: str = Field(
+        default=(
+            "Subscription Rp 5.000 / bulan. Sementara payment gateway belum aktif. "
+            "Hubungi admin untuk info pembayaran."
+        ),
+        description=(
+            "Instruksi pembayaran manual (multi-line OK). Ditampilin di halaman /billing "
+            "PWA + bot Telegram. Contoh:\n"
+            "  BCA 1234567890 a.n. Budi Santoso\\n"
+            "  DANA 081234567890 a.n. Budi"
+        ),
+    )
 
     @field_validator("default_currency")
     @classmethod

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from pengelola_keuangan.api.deps import CurrentUser, DBSession
+from pengelola_keuangan.api.deps import CurrentUser, CurrentUserCanWrite, DBSession
 from pengelola_keuangan.api.schemas import (
     TransactionCreate,
     TransactionItemInput,
@@ -68,7 +68,7 @@ def list_recent(
 @router.post("", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 def create_transaction(
     payload: TransactionCreate,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> TransactionResponse:
     """Create a transaction."""
@@ -104,7 +104,7 @@ def create_transaction(
 def update_transaction(
     transaction_id: int,
     payload: TransactionUpdate,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> TransactionResponse:
     """Update fields of an existing transaction."""
@@ -142,7 +142,7 @@ def update_transaction(
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_transaction(
     transaction_id: int,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> None:
     """Delete a transaction."""

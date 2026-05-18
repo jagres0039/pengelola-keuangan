@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from pengelola_keuangan.api.deps import CurrentUser, DBSession
+from pengelola_keuangan.api.deps import CurrentUser, CurrentUserCanWrite, DBSession
 from pengelola_keuangan.api.schemas import (
     CategoryCreate,
     CategoryResponse,
@@ -42,7 +42,7 @@ def list_categories(
 @router.post("", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
 def create_category(
     payload: CategoryCreate,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> CategoryResponse:
     """Create (or get) a category."""
@@ -60,7 +60,7 @@ def create_category(
 def rename_category(
     category_id: int,
     payload: CategoryUpdate,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> CategoryResponse:
     """Rename a category."""
@@ -74,7 +74,7 @@ def rename_category(
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_category(category_id: int, user: CurrentUser, session: DBSession) -> None:
+def delete_category(category_id: int, user: CurrentUserCanWrite, session: DBSession) -> None:
     """Delete a category."""
     ok = cat_svc.delete_category(session, user.id, category_id)
     if not ok:

@@ -35,6 +35,7 @@ from pengelola_keuangan.services import exporting as exporting_svc
 from pengelola_keuangan.services import importing as importing_svc
 from pengelola_keuangan.services import receipt_ocr as receipt_ocr_svc
 from pengelola_keuangan.services import recurring as recurring_svc
+from pengelola_keuangan.services import subscriptions as subscriptions_svc
 from pengelola_keuangan.services import transactions as transactions_svc
 from pengelola_keuangan.services import users as users_svc
 from pengelola_keuangan.services.formatting import format_money, format_month
@@ -113,6 +114,15 @@ def _with_user(
             await handler(update, context, session, user)
 
     return wrapper
+
+
+async def _ensure_can_write(message: Message, session: Session, user: User) -> bool:
+    """Send a read-only error to the user and return False if their subscription is expired."""
+    status = subscriptions_svc.get_status(user, session)
+    if status.can_write:
+        return True
+    await _send(message, messages.subscription_expired_text(status))
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -215,6 +225,8 @@ async def _record_transaction(
         user: User,
     ) -> None:
         message = _require_message(update_)
+        if not await _ensure_can_write(message, session, user):
+            return
         args = context_.args or []
         if not args:
             verb = "Pemasukan" if transaction_type is TransactionType.INCOME else "Pengeluaran"
@@ -353,6 +365,8 @@ async def delete_command(
 ) -> None:
     """Handle /delete <id>."""
     message = _require_message(update)
+    if not await _ensure_can_write(message, session, user):
+        return
     args = context.args or []
     if not args:
         await _send(message, "❌ Format: `/delete <id>`")
@@ -378,6 +392,8 @@ async def edit_command(
 ) -> None:
     """Handle /edit <id> <field> <value...>."""
     message = _require_message(update)
+    if not await _ensure_can_write(message, session, user):
+        return
     args = context.args or []
     if len(args) < 3:
         await _send(
@@ -539,6 +555,9 @@ async def budget_command(
     if not args:
         statuses = budgets_svc.list_budget_status(session, user.id, user.timezone)
         await _send(message, messages.budget_status_text(statuses, user.currency))
+        return
+
+    if not await _ensure_can_write(message, session, user):
         return
 
     sub = args[0].lower()
@@ -758,6 +777,12 @@ async def import_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             username=tg_user.username,
             first_name=tg_user.first_name,
         )
+        if not subscriptions_svc.get_status(user, session).can_write:
+            await query.edit_message_text(
+                messages.subscription_expired_text(subscriptions_svc.get_status(user, session)),
+            )
+            context.user_data.pop(PENDING_IMPORT_KEY, None)  # type: ignore[union-attr]
+            return
         rows, parse_errors = importing_svc.parse_import_rows(file_bytes, user.timezone)
         existing = []
         for year, month in months:
@@ -902,8 +927,6 @@ async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if image_bytes is None:
         return
 
-    notice = await message.reply_text(messages.receipt_scanning())
-
     with session_scope() as session:
         user, _ = users_svc.ensure_user(
             session,
@@ -911,12 +934,16 @@ async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TY
             username=tg_user.username,
             first_name=tg_user.first_name,
         )
+        if not await _ensure_can_write(message, session, user):
+            return
         expense_categories = categories_svc.list_categories(
             session, user.id, TransactionType.EXPENSE
         )
         category_names = [c.name for c in expense_categories]
         user_currency = user.currency
         user_tz = user.timezone
+
+    notice = await message.reply_text(messages.receipt_scanning())
 
     try:
         result = receipt_ocr_svc.parse_receipt(
@@ -1084,6 +1111,12 @@ async def receipt_callback_handler(update: Update, context: ContextTypes.DEFAULT
             username=tg_user.username,
             first_name=tg_user.first_name,
         )
+        if not subscriptions_svc.get_status(user, session).can_write:
+            await query.edit_message_text(
+                messages.subscription_expired_text(subscriptions_svc.get_status(user, session)),
+            )
+            context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
+            return
         if category_name:
             category = categories_svc.get_or_create_category(
                 session, user.id, category_name, TransactionType.EXPENSE
@@ -1264,3 +1297,212 @@ async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message,
         f"✅ Akun PWA *{email}* sudah ditautkan!\nSekarang data lo sama di bot & PWA.",
     )
+
+
+# --------------------------------------------------------------------------- #
+# /billing — show subscription status + payment instructions
+# /pay <amount> [method] [note] — submit a payment claim
+# /approve <payment_id> — admin only
+# /reject <payment_id> <reason...> — admin only
+# --------------------------------------------------------------------------- #
+
+
+@_with_user
+async def billing_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Show subscription status + payment instructions."""
+    _ = context
+    message = _require_message(update)
+    settings = get_settings()
+    status = subscriptions_svc.get_status(user, session)
+    await _send(message, messages.billing_status_text(status, settings.billing_instructions))
+
+
+@_with_user
+async def pay_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Submit a manual-transfer payment claim awaiting admin verification."""
+    message = _require_message(update)
+    args = context.args or []
+    if not args:
+        await _send(
+            message,
+            "❌ Format: `/pay <nominal> [metode] [catatan]`\n"
+            "Contoh: `/pay 5000 bca transfer atas nama Budi`",
+        )
+        return
+
+    try:
+        amount = parse_amount(args[0])
+    except ParseError as exc:
+        await _send(message, messages.parse_error_message(str(exc)))
+        return
+
+    method = args[1] if len(args) > 1 else "transfer"
+    proof_note = " ".join(args[2:]).strip() or None
+
+    try:
+        payment = subscriptions_svc.submit_payment(
+            session=session,
+            user=user,
+            amount=amount,
+            method=method,
+            proof_note=proof_note,
+        )
+    except ValueError as exc:
+        await _send(message, f"❌ {exc}")
+        return
+
+    await _send(
+        message, messages.payment_submitted_text(payment.id, payment.amount, payment.method)
+    )
+
+    # Notify all admins (if any) via Telegram DM
+    from sqlalchemy import select as _select
+
+    admin_ids: list[int] = []
+    for admin in session.scalars(_select(User).where(User.is_admin.is_(True))).all():
+        if admin.telegram_user_id and admin.telegram_user_id != user.telegram_user_id:
+            admin_ids.append(admin.telegram_user_id)
+
+    notify_text = (
+        f"📨 Pembayaran baru #{payment.id}\n"
+        f"User: {user.first_name or user.email or user.username or user.id}\n"
+        f"Nominal: Rp {payment.amount:,.0f}\n"
+        f"Metode: {payment.method}\n"
+    )
+    if payment.proof_note:
+        notify_text += f"Catatan: {payment.proof_note}\n"
+    notify_text += f"\nApprove: `/approve {payment.id}`\nTolak: `/reject {payment.id} <alasan>`"
+
+    bot = context.bot
+    for admin_chat_id in admin_ids:
+        try:
+            await bot.send_message(admin_chat_id, notify_text, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            logger.warning("failed to notify admin %s", admin_chat_id, exc_info=True)
+
+
+@_with_user
+async def approve_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Admin-only: /approve <payment_id> — approve a pending payment, extend subscription 30 days."""
+    message = _require_message(update)
+    if not user.is_admin:
+        await _send(message, messages.admin_only_text())
+        return
+    args = context.args or []
+    if not args:
+        await _send(message, "❌ Format: `/approve <payment_id>`")
+        return
+    try:
+        payment_id = int(args[0].lstrip("#"))
+    except ValueError:
+        await _send(message, "❌ Payment ID harus angka.")
+        return
+
+    from sqlalchemy import select as _select
+
+    from pengelola_keuangan.db.models import Payment as _P
+
+    payment = session.execute(_select(_P).where(_P.id == payment_id)).scalar_one_or_none()
+    if payment is None:
+        await _send(message, f"❌ Payment #{payment_id} tidak ditemukan.")
+        return
+
+    try:
+        payment = subscriptions_svc.approve_payment(session=session, payment=payment, admin=user)
+    except ValueError as exc:
+        await _send(message, f"❌ {exc}")
+        return
+
+    target_user = payment.user
+    await _send(
+        message,
+        f"✅ Payment #{payment.id} disetujui.\n"
+        f"User: {target_user.first_name or target_user.email or target_user.id}\n"
+        f"Aktif sampai: {payment.period_end.strftime('%d %b %Y') if payment.period_end else '—'}",
+    )
+
+    # Notify the user
+    if target_user.telegram_user_id:
+        try:
+            await context.bot.send_message(
+                target_user.telegram_user_id,
+                messages.payment_approved_text(payment.amount, payment.period_end),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            logger.warning("failed to notify user %s of approval", target_user.id, exc_info=True)
+
+
+@_with_user
+async def reject_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Admin-only: /reject <payment_id> <reason...> — reject a pending payment with reason."""
+    message = _require_message(update)
+    if not user.is_admin:
+        await _send(message, messages.admin_only_text())
+        return
+    args = context.args or []
+    if len(args) < 2:
+        await _send(message, "❌ Format: `/reject <payment_id> <alasan>`")
+        return
+    try:
+        payment_id = int(args[0].lstrip("#"))
+    except ValueError:
+        await _send(message, "❌ Payment ID harus angka.")
+        return
+    reason = " ".join(args[1:]).strip()
+    if not reason:
+        await _send(message, "❌ Alasan tidak boleh kosong.")
+        return
+
+    from sqlalchemy import select as _select
+
+    from pengelola_keuangan.db.models import Payment as _P
+
+    payment = session.execute(_select(_P).where(_P.id == payment_id)).scalar_one_or_none()
+    if payment is None:
+        await _send(message, f"❌ Payment #{payment_id} tidak ditemukan.")
+        return
+
+    try:
+        payment = subscriptions_svc.reject_payment(
+            session=session,
+            payment=payment,
+            admin=user,
+            reason=reason,
+        )
+    except ValueError as exc:
+        await _send(message, f"❌ {exc}")
+        return
+
+    target_user = payment.user
+    await _send(message, f"✅ Payment #{payment.id} ditolak.")
+
+    if target_user.telegram_user_id:
+        try:
+            await context.bot.send_message(
+                target_user.telegram_user_id,
+                messages.payment_rejected_text(payment.amount, reason),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            logger.warning("failed to notify user %s of rejection", target_user.id, exc_info=True)

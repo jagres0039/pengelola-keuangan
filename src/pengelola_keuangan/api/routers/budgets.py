@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, status
 
-from pengelola_keuangan.api.deps import CurrentUser, DBSession
+from pengelola_keuangan.api.deps import CurrentUser, CurrentUserCanWrite, DBSession
 from pengelola_keuangan.api.schemas import BudgetCreate, BudgetResponse
 from pengelola_keuangan.db.models import TransactionType
 from pengelola_keuangan.services import budgets as budget_svc
@@ -35,7 +35,7 @@ def list_budgets(user: CurrentUser, session: DBSession) -> list[BudgetResponse]:
 @router.put("", response_model=BudgetResponse)
 def upsert_budget(
     payload: BudgetCreate,
-    user: CurrentUser,
+    user: CurrentUserCanWrite,
     session: DBSession,
 ) -> BudgetResponse:
     """Create or update a monthly budget for a category."""
@@ -73,7 +73,7 @@ def upsert_budget(
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_budget(category_id: int, user: CurrentUser, session: DBSession) -> None:
+def delete_budget(category_id: int, user: CurrentUserCanWrite, session: DBSession) -> None:
     """Delete a budget."""
     ok = budget_svc.delete_budget(session, user.id, category_id)
     if not ok:

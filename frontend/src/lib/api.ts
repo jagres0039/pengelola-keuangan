@@ -90,6 +90,7 @@ export type UserMe = {
   currency: string;
   telegram_linked: boolean;
   low_balance_threshold: string;
+  is_admin: boolean;
 };
 
 export type Category = {
@@ -199,4 +200,35 @@ export type ImportApplyResponse = {
   created: number;
   updated: number;
   deleted: number;
+};
+
+export type SubscriptionStatus = {
+  state: "trial" | "active" | "expired";
+  active: boolean;
+  can_write: boolean;
+  expires_at: string | null;
+  days_left: number;
+  has_pending_payment: boolean;
+  monthly_price: string;
+  currency: string;
+  billing_instructions: string;
+};
+
+export type Payment = {
+  id: number;
+  amount: string;
+  method: string;
+  proof_note: string | null;
+  status: "pending" | "approved" | "rejected";
+  period_start: string | null;
+  period_end: string | null;
+  decided_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+};
+
+export type AdminPayment = Payment & {
+  user_id: number;
+  user_email: string | null;
+  user_first_name: string | null;
 };
