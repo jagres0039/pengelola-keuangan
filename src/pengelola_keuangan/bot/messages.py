@@ -74,6 +74,10 @@ HELP_TEXT = (
     "*Export / Import*\n"
     "`/export csv` atau `/export xlsx`\n"
     "Kirim file .xlsx ke chat ini buat import\n\n"
+    "*Struk Pembayaran (OCR)*\n"
+    "Kirim foto struk ke chat — bot bakal baca otomatis,\n"
+    "tampilkan preview (total, merchant, tanggal, kategori),\n"
+    "lalu konfirmasi sebelum simpan.\n\n"
     "*Pengaturan*\n"
     "`/timezone <IANA>` — contoh: `Asia/Jakarta`, `Asia/Makassar`\n"
     "`/currency <CODE>` — contoh: `IDR`, `USD`\n"
@@ -329,3 +333,74 @@ def reminder_status(enabled: bool, hour: int) -> str:
 def now_label(dt: datetime) -> str:
     """Human-friendly current time label."""
     return dt.strftime("%d %b %Y %H:%M")
+
+
+def receipt_disabled() -> str:
+    """Shown when GEMINI_API_KEY is not configured but the user sent a photo."""
+    return (
+        "❌ Fitur baca struk belum dikonfigurasi.\n"
+        "Admin bot harus set `GEMINI_API_KEY` di environment dulu.\n\n"
+        "Sementara, lo bisa catat manual: `/out 35000 belanja`."
+    )
+
+
+def receipt_scanning() -> str:
+    """Status while the receipt is being processed."""
+    return "🔍 Lagi baca struk… ini cuma butuh beberapa detik."
+
+
+def receipt_not_a_receipt() -> str:
+    """Shown when Gemini says the image is not a receipt."""
+    return (
+        "🤔 Gambar ini sepertinya bukan struk pembayaran.\n"
+        "Coba kirim foto struk yang lebih jelas, atau catat manual pake `/out`."
+    )
+
+
+def receipt_parse_failed(detail: str) -> str:
+    """Shown when OCR fails."""
+    return f"❌ Gagal baca struk: {detail}\n\nCoba foto ulang yang lebih jelas atau catat manual pake `/out`."
+
+
+def receipt_preview(
+    *,
+    merchant: str,
+    amount: Decimal,
+    currency: str,
+    occurred_at: datetime | None,
+    category_name: str,
+    notes: str,
+    tz_name: str,
+) -> str:
+    """Preview before confirming a receipt-based transaction."""
+    if occurred_at is not None:
+        local_dt = to_user_tz(occurred_at, tz_name)
+        when = local_dt.strftime("%d %b %Y %H:%M")
+    else:
+        when = "_(tanggal tidak terdeteksi, pakai sekarang)_"
+    merchant_line = merchant if merchant else "_(merchant tidak terdeteksi)_"
+    notes_line = f"\nCatatan: _{notes}_" if notes else ""
+    return (
+        "🧾 *Struk Terbaca*\n\n"
+        f"🏪 Merchant: {merchant_line}\n"
+        f"📅 Tanggal: {when}\n"
+        f"💰 Total: *{format_money(amount, currency)}*\n"
+        f"📂 Kategori: *{category_name}*"
+        f"{notes_line}\n\n"
+        "Konfirmasi simpan sebagai pengeluaran?"
+    )
+
+
+def receipt_saved(transaction: Transaction, category: Category | None, currency: str) -> str:
+    """Confirmation after a receipt is saved as a transaction."""
+    cat = category.name if category else "—"
+    note = f" — _{transaction.note}_" if transaction.note else ""
+    return (
+        f"✅ Struk disimpan sebagai pengeluaran #{transaction.id}.\n"
+        f"-{format_money(transaction.amount, currency)} • {cat}{note}"
+    )
+
+
+def receipt_cancelled() -> str:
+    """Shown when the user cancels the receipt preview."""
+    return "❌ Struk dibatalkan, gak disimpan."
