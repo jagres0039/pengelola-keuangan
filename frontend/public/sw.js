@@ -1,7 +1,7 @@
 // Minimal service worker that caches the app shell and serves a fallback
 // when the network is unavailable. API requests always go through the network.
 
-const CACHE = "pengelola-keuangan-v2";
+const CACHE = "pengelola-keuangan-v3";
 const APP_SHELL = ["/", "/login", "/register", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
