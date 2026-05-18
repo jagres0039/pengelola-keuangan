@@ -54,3 +54,15 @@ data/
 
 # Local Alembic database
 test.db
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Certbot data (issued certs live on the VPS, not in git)
+deploy/certbot/conf/
+deploy/certbot/www/

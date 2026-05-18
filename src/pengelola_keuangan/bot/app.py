@@ -40,6 +40,8 @@ PUBLIC_COMMANDS: list[tuple[str, str]] = [
     ("recurring_add", "Tambah recurring (wizard)"),
     ("reminder", "Atur reminder harian"),
     ("export", "Export CSV / Excel"),
+    ("billing", "Status subscription & cara bayar"),
+    ("pay", "Lapor pembayaran (manual transfer)"),
     ("timezone", "Set zona waktu"),
     ("currency", "Set mata uang"),
 ]
@@ -99,12 +101,24 @@ def build_application() -> Application:
 
     application.add_handler(CommandHandler("reminder", handlers.reminder_command))
     application.add_handler(CommandHandler("export", handlers.export_command))
+    application.add_handler(CommandHandler("link", handlers.link_command))
+
+    application.add_handler(CommandHandler("billing", handlers.billing_command))
+    application.add_handler(CommandHandler("pay", handlers.pay_command))
+    application.add_handler(CommandHandler("approve", handlers.approve_command))
+    application.add_handler(CommandHandler("reject", handlers.reject_command))
 
     application.add_handler(
         MessageHandler(filters.Document.FileExtension("xlsx"), handlers.import_document_handler)
     )
     application.add_handler(
         CallbackQueryHandler(handlers.import_callback_handler, pattern=r"^import:")
+    )
+
+    application.add_handler(MessageHandler(filters.PHOTO, handlers.receipt_photo_handler))
+    application.add_handler(MessageHandler(filters.Document.IMAGE, handlers.receipt_photo_handler))
+    application.add_handler(
+        CallbackQueryHandler(handlers.receipt_callback_handler, pattern=r"^receipt:")
     )
 
     application.add_handler(MessageHandler(filters.COMMAND, handlers.unknown_command))
