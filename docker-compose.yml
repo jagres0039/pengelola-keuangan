@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bot}
+      POSTGRES_DB: ${POSTGRES_DB:-pengelola_keuangan}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot} -d ${POSTGRES_DB:-pengelola_keuangan}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD:-bot}@db:5432/${POSTGRES_DB:-pengelola_keuangan}
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Jakarta}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-IDR}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS:-}
+
+volumes:
+  postgres_data:
