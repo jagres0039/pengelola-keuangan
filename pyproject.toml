@@ -6,16 +6,21 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.13",
     "apscheduler>=3.10",
+    "bcrypt>=4.2",
+    "fastapi>=0.115",
     "google-genai>=0.3",
     "matplotlib>=3.9",
     "openpyxl>=3.1",
     "psycopg[binary]>=3.2",
-    "pydantic>=2.7",
+    "pydantic[email]>=2.7",
     "pydantic-settings>=2.4",
+    "pyjwt>=2.9",
     "python-dotenv>=1.0",
+    "python-multipart>=0.0.12",
     "python-telegram-bot[job-queue]>=21",
     "pytz>=2024.1",
     "sqlalchemy>=2.0",
+    "uvicorn[standard]>=0.32",
 ]
 
 [dependency-groups]

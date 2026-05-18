@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 from collections.abc import Callable, Coroutine
+from datetime import UTC
 from datetime import datetime as datetime_t
 from decimal import Decimal
 from typing import Any, cast
@@ -1070,3 +1071,160 @@ async def receipt_callback_handler(update: Update, context: ContextTypes.DEFAULT
 
     context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
     await query.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+
+# --------------------------------------------------------------------------- #
+# /link — bind PWA email account to this Telegram chat
+# --------------------------------------------------------------------------- #
+
+
+async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /link <CODE> — link this Telegram chat to a PWA email account.
+
+    Flow:
+    1. User registers on PWA (email + password) -> gets a 6-char link code
+    2. User opens bot and types /link ABC123
+    3. Bot validates code & expiry, then merges the two User rows:
+       - Telegram user's transactions/categories/budgets/recurring move to PWA user
+       - Telegram user row is deleted; PWA user gets telegram_user_id set
+       - From now on, bot & PWA share the same data
+    """
+    from sqlalchemy import select as _select
+
+    message = _require_message(update)
+    tg_user = _require_user(update)
+    if not users_svc.is_user_allowed(tg_user.id):
+        await _send(message, messages.access_denied())
+        return
+
+    args = context.args or []
+    if not args:
+        await _send(
+            message,
+            "🔗 *Link akun PWA*\n\n"
+            "1. Login di PWA → menu *Settings* → *Hubungkan ke Telegram*\n"
+            "2. Copy kode 6-huruf yang muncul\n"
+            "3. Kirim ke bot: `/link KODE`\n\n"
+            "Kode berlaku 15 menit.",
+        )
+        return
+
+    code = args[0].strip().upper()
+    if not code or len(code) > 16:
+        await _send(message, "❌ Format: `/link <KODE>` (6-16 huruf).")
+        return
+
+    with session_scope() as session:
+        from datetime import datetime
+
+        pwa_user = session.scalar(_select(User).where(User.link_code == code))
+        if pwa_user is None:
+            await _send(message, "❌ Kode tidak valid atau sudah kadaluarsa.")
+            return
+        if pwa_user.link_code_expires_at is None or pwa_user.link_code_expires_at < datetime.now(
+            UTC
+        ):
+            await _send(message, "❌ Kode sudah kadaluarsa. Generate ulang di PWA.")
+            return
+        if pwa_user.telegram_user_id is not None and pwa_user.telegram_user_id != tg_user.id:
+            await _send(
+                message,
+                "❌ Akun PWA ini sudah ditautkan ke chat Telegram lain.",
+            )
+            return
+
+        # Existing Telegram-only user (created previously via bot)?
+        existing = session.scalar(_select(User).where(User.telegram_user_id == tg_user.id))
+        if existing is not None and existing.id != pwa_user.id:
+            # Merge: move all data from existing -> pwa_user.
+            from pengelola_keuangan.db.models import (
+                Budget as _B,
+            )
+            from pengelola_keuangan.db.models import (
+                Category as _C,
+            )
+            from pengelola_keuangan.db.models import (
+                Recurring as _R,
+            )
+            from pengelola_keuangan.db.models import (
+                Transaction as _T,
+            )
+
+            # 1. Copy any non-default categories from the Telegram-only user that
+            #    don't yet exist on the PWA user. Flush so we have IDs to re-point to.
+            pwa_cats: dict[tuple[str, TransactionType], _C] = {
+                (c.name.lower(), c.type): c
+                for c in session.scalars(_select(_C).where(_C.user_id == pwa_user.id))
+            }
+            for cat in list(session.scalars(_select(_C).where(_C.user_id == existing.id))):
+                key = (cat.name.lower(), cat.type)
+                if key in pwa_cats:
+                    continue
+                new_cat = _C(
+                    user_id=pwa_user.id,
+                    name=cat.name,
+                    type=cat.type,
+                    emoji=cat.emoji,
+                    is_default=cat.is_default,
+                )
+                session.add(new_cat)
+                pwa_cats[key] = new_cat
+            session.flush()
+
+            # 2. Re-point transactions onto the PWA user using the now-complete category map.
+            for tx in session.scalars(_select(_T).where(_T.user_id == existing.id)):
+                tx.user_id = pwa_user.id
+                if tx.category is not None:
+                    match = pwa_cats.get((tx.category.name.lower(), tx.type))
+                    if match is not None:
+                        tx.category_id = match.id
+
+            # 3. Re-point recurring templates similarly.
+            for rec in session.scalars(_select(_R).where(_R.user_id == existing.id)):
+                rec.user_id = pwa_user.id
+                if rec.category is not None:
+                    match = pwa_cats.get((rec.category.name.lower(), rec.type))
+                    if match is not None:
+                        rec.category_id = match.id
+
+            # 4. Copy budgets (skip if PWA user already has one for that category-by-name).
+            pwa_budget_cat_names = {
+                c.name.lower()
+                for c in session.scalars(
+                    _select(_C).join(_B, _B.category_id == _C.id).where(_B.user_id == pwa_user.id)
+                )
+            }
+            for budget in session.scalars(_select(_B).where(_B.user_id == existing.id)):
+                cat_name = budget.category.name.lower()
+                if cat_name in pwa_budget_cat_names:
+                    continue
+                match = pwa_cats.get((cat_name, TransactionType.EXPENSE))
+                if match is None:
+                    continue
+                session.add(
+                    _B(
+                        user_id=pwa_user.id,
+                        category_id=match.id,
+                        monthly_limit=budget.monthly_limit,
+                    )
+                )
+
+            session.flush()
+            # Now delete existing telegram-only user (cascade removes leftovers)
+            session.delete(existing)
+            session.flush()
+
+        pwa_user.telegram_user_id = tg_user.id
+        if tg_user.username and not pwa_user.username:
+            pwa_user.username = tg_user.username
+        if tg_user.first_name and not pwa_user.first_name:
+            pwa_user.first_name = tg_user.first_name
+        pwa_user.link_code = None
+        pwa_user.link_code_expires_at = None
+        session.flush()
+        email = pwa_user.email or "(tanpa email)"
+
+    await _send(
+        message,
+        f"✅ Akun PWA *{email}* sudah ditautkan!\nSekarang data lo sama di bot & PWA.",
+    )
