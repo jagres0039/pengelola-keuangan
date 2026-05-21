@@ -12,6 +12,7 @@ import {
   type ImportApplyResponse,
   type ImportPreviewResponse,
   type LinkCode,
+  type ProfileMode,
   type SubscriptionStatus,
   type UserMe,
 } from "@/lib/api";
@@ -33,6 +34,11 @@ function SettingsInner({ user }: { user: UserMe }) {
   const [thBusy, setThBusy] = useState(false);
   const [thMsg, setThMsg] = useState<string | null>(null);
   const [thErr, setThErr] = useState<string | null>(null);
+
+  // Profile mode toggle (standar | pengusaha)
+  const [profileMode, setProfileMode] = useState<ProfileMode>(user.profile_mode);
+  const [pmBusy, setPmBusy] = useState(false);
+  const [pmErr, setPmErr] = useState<string | null>(null);
 
   const [sub, setSub] = useState<SubscriptionStatus | null>(null);
   useEffect(() => {
@@ -64,6 +70,22 @@ function SettingsInner({ user }: { user: UserMe }) {
   function logout() {
     setToken(null);
     router.replace("/login");
+  }
+
+  async function changeProfileMode(next: ProfileMode) {
+    if (next === profileMode || pmBusy) return;
+    const previous = profileMode;
+    setProfileMode(next);
+    setPmBusy(true);
+    setPmErr(null);
+    try {
+      await api.patch<UserMe>("/auth/me", { profile_mode: next });
+    } catch (e) {
+      setProfileMode(previous);
+      setPmErr((e as { detail?: string }).detail ?? "gagal ganti mode");
+    } finally {
+      setPmBusy(false);
+    }
   }
 
   async function saveThreshold() {
@@ -190,6 +212,55 @@ function SettingsInner({ user }: { user: UserMe }) {
           <p className="text-slate-500">Timezone</p>
           <p className="font-medium">{user.timezone}</p>
         </div>
+      </section>
+
+      <section className="mx-4 mt-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Mode Profil
+        </h2>
+        <p className="text-xs text-slate-500">
+          Standar: catat pemasukan & pengeluaran biasa. Pengusaha: tambah fitur
+          piutang, hutang, stok, dan laporan keuangan ala bisnis.
+        </p>
+        <div
+          role="radiogroup"
+          aria-label="Mode Profil"
+          className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1"
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={profileMode === "standar"}
+            disabled={pmBusy}
+            onClick={() => changeProfileMode("standar")}
+            className={
+              "rounded-lg px-4 py-2 text-sm font-semibold transition disabled:opacity-60 " +
+              (profileMode === "standar"
+                ? "bg-white text-slate-900 shadow"
+                : "text-slate-500 hover:text-slate-700")
+            }
+          >
+            Standar
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={profileMode === "pengusaha"}
+            disabled={pmBusy}
+            onClick={() => changeProfileMode("pengusaha")}
+            className={
+              "rounded-lg px-4 py-2 text-sm font-semibold transition disabled:opacity-60 " +
+              (profileMode === "pengusaha"
+                ? "bg-white text-slate-900 shadow"
+                : "text-slate-500 hover:text-slate-700")
+            }
+          >
+            Pengusaha
+          </button>
+        </div>
+        {pmErr ? (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{pmErr}</p>
+        ) : null}
       </section>
 
       <section className="mx-4 mt-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm">

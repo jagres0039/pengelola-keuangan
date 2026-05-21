@@ -24,7 +24,7 @@ from pengelola_keuangan.api.security import (
     verify_password,
 )
 from pengelola_keuangan.config import get_settings
-from pengelola_keuangan.db.models import User
+from pengelola_keuangan.db.models import ProfileMode, User
 from pengelola_keuangan.services.subscriptions import ensure_trial
 from pengelola_keuangan.services.users import seed_default_categories
 
@@ -42,6 +42,7 @@ def _user_to_response(user: User) -> UserResponse:
         telegram_linked=user.telegram_user_id is not None,
         low_balance_threshold=user.low_balance_threshold,
         is_admin=user.is_admin,
+        profile_mode=ProfileMode(user.profile_mode).value,
     )
 
 
@@ -99,7 +100,7 @@ def me(user: CurrentUser) -> UserResponse:
 
 @router.patch("/me", response_model=UserResponse)
 def update_me(payload: UpdateUserRequest, user: CurrentUser, session: DBSession) -> UserResponse:
-    """Update profile fields (first_name / timezone / currency / low_balance_threshold)."""
+    """Update profile fields (first_name / timezone / currency / low_balance_threshold / profile_mode)."""
     if payload.first_name is not None:
         user.first_name = payload.first_name.strip() or None
     if payload.timezone is not None:
@@ -108,6 +109,8 @@ def update_me(payload: UpdateUserRequest, user: CurrentUser, session: DBSession)
         user.currency = payload.currency.upper().strip()
     if payload.low_balance_threshold is not None:
         user.low_balance_threshold = payload.low_balance_threshold
+    if payload.profile_mode is not None:
+        user.profile_mode = ProfileMode(payload.profile_mode)
     session.flush()
     return _user_to_response(user)
 

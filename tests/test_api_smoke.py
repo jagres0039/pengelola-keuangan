@@ -237,3 +237,31 @@ def test_link_code_issued(client: TestClient) -> None:
     data = r.json()
     assert len(data["code"]) == 6
     assert data["code"].isalnum()
+
+
+def test_profile_mode_default_and_toggle(client: TestClient) -> None:
+    token = _register(client)
+    h = {"Authorization": f"Bearer {token}"}
+
+    # default: standar
+    r = client.get("/api/auth/me", headers=h)
+    assert r.status_code == 200
+    assert r.json()["profile_mode"] == "standar"
+
+    # switch to pengusaha
+    r = client.patch("/api/auth/me", json={"profile_mode": "pengusaha"}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["profile_mode"] == "pengusaha"
+
+    # persisted on next /me
+    r = client.get("/api/auth/me", headers=h)
+    assert r.json()["profile_mode"] == "pengusaha"
+
+    # invalid value rejected
+    r = client.patch("/api/auth/me", json={"profile_mode": "bukan-mode"}, headers=h)
+    assert r.status_code == 422
+
+    # switch back to standar
+    r = client.patch("/api/auth/me", json={"profile_mode": "standar"}, headers=h)
+    assert r.status_code == 200
+    assert r.json()["profile_mode"] == "standar"
