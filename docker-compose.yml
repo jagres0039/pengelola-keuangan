@@ -46,6 +46,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib di-set di .env}
       JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES:-43200}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+      BILLING_INSTRUCTIONS: ${BILLING_INSTRUCTIONS:-}
     command: ["sh", "-c", "alembic upgrade head && python -m uvicorn pengelola_keuangan.api.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"]
     expose:
       - "8000"
