@@ -299,3 +299,41 @@ class PaymentRejectRequest(BaseModel):
     """Reason for rejecting a payment."""
 
     reason: str = Field(min_length=1, max_length=255)
+
+
+# ----- Direktori (customer/supplier) -----
+
+
+class ContactResponse(BaseModel):
+    """A contact (customer/supplier) directory entry."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    kind: Literal["customer", "supplier", "both"]
+    phone: str | None
+    address: str | None
+    notes: str | None
+    archived: bool
+    created_at: datetime
+
+
+class ContactCreate(BaseModel):
+    """Create a new contact."""
+
+    name: str = Field(min_length=1, max_length=128)
+    kind: Literal["customer", "supplier", "both"] = "customer"
+    phone: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=255)
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class ContactUpdate(BaseModel):
+    """Patch contact fields (any subset)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    kind: Literal["customer", "supplier", "both"] | None = None
+    phone: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=255)
+    notes: str | None = Field(default=None, max_length=500)

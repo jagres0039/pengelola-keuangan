@@ -263,6 +263,24 @@ function SettingsInner({ user }: { user: UserMe }) {
         ) : null}
       </section>
 
+      {profileMode === "pengusaha" ? (
+        <section className="mx-4 mt-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Pengusaha
+          </h2>
+          <p className="text-xs text-slate-500">
+            Fitur tambahan untuk pencatatan keuangan usaha.
+          </p>
+          <Link
+            href="/contacts"
+            className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-100"
+          >
+            <span>📒 Direktori (Customer & Supplier)</span>
+            <span className="text-slate-400">›</span>
+          </Link>
+        </section>
+      ) : null}
+
       <section className="mx-4 mt-4 space-y-3 rounded-2xl bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">

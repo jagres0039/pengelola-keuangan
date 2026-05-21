@@ -13,6 +13,7 @@ from pengelola_keuangan.api.routers import (
     billing,
     budgets,
     categories,
+    contacts,
     export_import,
     receipt,
     summary,
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(export_import.router, prefix="/api")
     app.include_router(billing.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
+    app.include_router(contacts.router, prefix="/api")
 
     return app
 

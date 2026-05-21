@@ -51,6 +51,14 @@ class ProfileMode(StrEnum):
     PENGUSAHA = "pengusaha"
 
 
+class ContactKind(StrEnum):
+    """Type of a business contact (directory entry)."""
+
+    CUSTOMER = "customer"
+    SUPPLIER = "supplier"
+    BOTH = "both"
+
+
 class User(Base):
     """User of the system (via Telegram bot, PWA, or both)."""
 
@@ -103,6 +111,9 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         foreign_keys="Payment.user_id",
+    )
+    contacts: Mapped[list[Contact]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -270,3 +281,32 @@ class Payment(Base):
 
     user: Mapped[User] = relationship(back_populates="payments", foreign_keys=[user_id])
     decided_by: Mapped[User | None] = relationship(foreign_keys=[decided_by_user_id])
+
+
+class Contact(Base):
+    """Direktori kontak bisnis (customer / supplier) per user.
+
+    Foundation for Piutang (A/R) & Hutang (A/P) features. Only exposed to
+    users with ``profile_mode == ProfileMode.PENGUSAHA``.
+    """
+
+    __tablename__ = "contacts"
+    __table_args__ = (Index("ix_contacts_user_kind", "user_id", "kind"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[ContactKind] = mapped_column(
+        String(16), default=ContactKind.CUSTOMER, nullable=False
+    )
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="contacts")
