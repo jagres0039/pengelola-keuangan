@@ -4,21 +4,21 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
-import { api, type Category } from "@/lib/api";
+import { api, type Account, type Category, type UserMe } from "@/lib/api";
 
 export default function AddPage() {
   return (
     <AuthGuard>
-      {() => (
+      {(user) => (
         <Suspense fallback={<div className="p-4 text-slate-400">memuat…</div>}>
-          <AddInner />
+          <AddInner user={user} />
         </Suspense>
       )}
     </AuthGuard>
   );
 }
 
-function AddInner() {
+function AddInner({ user }: { user: UserMe }) {
   const router = useRouter();
   const search = useSearchParams();
   const initialType =
@@ -28,8 +28,12 @@ function AddInner() {
   const [note, setNote] = useState("");
   const [categories, setCategories] = useState<Category[]>([]);
   const [catId, setCatId] = useState<number | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountId, setAccountId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const isPengusaha = user.profile_mode === "pengusaha";
 
   useEffect(() => {
     api
@@ -40,6 +44,16 @@ function AddInner() {
       })
       .catch((e: { detail?: string }) => setErr(e.detail ?? "gagal load kategori"));
   }, [type]);
+
+  useEffect(() => {
+    if (!isPengusaha) return;
+    api
+      .get<Account[]>("/accounts")
+      .then((accs) => setAccounts(accs))
+      .catch(() => {
+        /* non-fatal: account selector optional */
+      });
+  }, [isPengusaha]);
 
   function setTypeReset(t: "in" | "out") {
     setType(t);
@@ -57,6 +71,7 @@ function AddInner() {
         type,
         amount: amt,
         category_id: catId,
+        account_id: isPengusaha ? accountId : null,
         note: note.trim() || null,
       });
       router.replace("/dashboard");
@@ -134,6 +149,43 @@ function AddInner() {
             ))}
           </div>
         </div>
+
+        {isPengusaha && accounts.length > 0 ? (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              Akun Kas (opsional)
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setAccountId(null)}
+                className={
+                  "rounded-full px-3 py-1.5 text-sm shadow-sm " +
+                  (accountId === null
+                    ? "bg-slate-800 text-white"
+                    : "bg-white text-slate-700")
+                }
+              >
+                — Tanpa akun —
+              </button>
+              {accounts.map((a) => (
+                <button
+                  type="button"
+                  key={a.id}
+                  onClick={() => setAccountId(a.id)}
+                  className={
+                    "rounded-full px-3 py-1.5 text-sm shadow-sm " +
+                    (accountId === a.id
+                      ? "bg-brand-600 text-white"
+                      : "bg-white text-slate-700")
+                  }
+                >
+                  {a.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">Catatan (opsional)</label>

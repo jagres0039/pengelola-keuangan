@@ -65,6 +65,7 @@ def create_transaction(
     occurred_at: datetime | None = None,
     user_tz: str = "Asia/Jakarta",
     items: list[ItemInput] | None = None,
+    account_id: int | None = None,
 ) -> Transaction:
     """Insert a new transaction with optional line items."""
     transaction = Transaction(
@@ -72,6 +73,7 @@ def create_transaction(
         type=transaction_type,
         amount=amount,
         category_id=category_id,
+        account_id=account_id,
         note=note,
         occurred_at=occurred_at or now_in(user_tz),
     )

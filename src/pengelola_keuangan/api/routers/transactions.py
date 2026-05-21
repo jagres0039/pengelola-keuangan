@@ -12,7 +12,7 @@ from pengelola_keuangan.api.schemas import (
     TransactionResponse,
     TransactionUpdate,
 )
-from pengelola_keuangan.db.models import Transaction, TransactionType
+from pengelola_keuangan.db.models import Account, Transaction, TransactionType
 from pengelola_keuangan.services import categories as cat_svc
 from pengelola_keuangan.services import transactions as tx_svc
 
@@ -26,6 +26,8 @@ def _to_response(tx: Transaction) -> TransactionResponse:
         amount=tx.amount,
         category_id=tx.category_id,
         category_name=tx.category.name if tx.category is not None else None,
+        account_id=tx.account_id,
+        account_name=tx.account.name if tx.account is not None else None,
         note=tx.note,
         occurred_at=tx.occurred_at,
         items=[
@@ -86,12 +88,21 @@ def create_transaction(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="kategori beda type sama transaksi",
             )
+    account_id = payload.account_id
+    if account_id is not None:
+        acc = session.get(Account, account_id)
+        if acc is None or acc.user_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="akun gak ketemu",
+            )
     tx = tx_svc.create_transaction(
         session,
         user_id=user.id,
         transaction_type=tx_type,
         amount=payload.amount,
         category_id=cat_id,
+        account_id=account_id,
         note=payload.note,
         occurred_at=payload.occurred_at,
         user_tz=user.timezone,
@@ -129,6 +140,14 @@ def update_transaction(
                 detail="kategori beda type sama transaksi",
             )
         tx.category_id = cat.id
+    if payload.account_id is not None:
+        acc = session.get(Account, payload.account_id)
+        if acc is None or acc.user_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="akun gak ketemu",
+            )
+        tx.account_id = acc.id
     if payload.note is not None:
         tx.note = payload.note.strip() or None
     if payload.occurred_at is not None:
