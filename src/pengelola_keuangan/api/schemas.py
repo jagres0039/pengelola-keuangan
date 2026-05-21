@@ -107,6 +107,7 @@ class TransactionCreate(BaseModel):
     type: str = Field(pattern="^(in|out)$")
     amount: Decimal = Field(gt=0)
     category_id: int | None = None
+    account_id: int | None = None
     note: str | None = Field(default=None, max_length=255)
     occurred_at: datetime | None = None
     items: list[TransactionItemInput] = Field(default_factory=list)
@@ -117,6 +118,7 @@ class TransactionUpdate(BaseModel):
 
     amount: Decimal | None = Field(default=None, gt=0)
     category_id: int | None = None
+    account_id: int | None = None
     note: str | None = Field(default=None, max_length=255)
     occurred_at: datetime | None = None
     items: list[TransactionItemInput] | None = None
@@ -130,6 +132,8 @@ class TransactionResponse(BaseModel):
     amount: Decimal
     category_id: int | None
     category_name: str | None
+    account_id: int | None = None
+    account_name: str | None = None
     note: str | None
     occurred_at: datetime
     items: list[TransactionItemResponse] = Field(default_factory=list)
@@ -337,3 +341,60 @@ class ContactUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=32)
     address: str | None = Field(default=None, max_length=255)
     notes: str | None = Field(default=None, max_length=500)
+
+
+# ----- Multi-Akun Kas (Pengusaha) -----
+
+
+class AccountResponse(BaseModel):
+    """An account (kas / bank / e-wallet) with computed balance."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    kind: Literal["cash", "bank", "ewallet", "other"]
+    opening_balance: Decimal
+    balance: Decimal
+    archived: bool
+    created_at: datetime
+
+
+class AccountCreate(BaseModel):
+    """Create a new account."""
+
+    name: str = Field(min_length=1, max_length=64)
+    kind: Literal["cash", "bank", "ewallet", "other"] = "cash"
+    opening_balance: Decimal = Field(default=Decimal("0"), ge=0)
+
+
+class AccountUpdate(BaseModel):
+    """Patch account fields."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    kind: Literal["cash", "bank", "ewallet", "other"] | None = None
+    opening_balance: Decimal | None = Field(default=None, ge=0)
+
+
+class TransferResponse(BaseModel):
+    """A transfer (kas → kas) record."""
+
+    id: int
+    from_account_id: int
+    from_account_name: str
+    to_account_id: int
+    to_account_name: str
+    amount: Decimal
+    note: str | None
+    occurred_at: datetime
+    created_at: datetime
+
+
+class TransferCreate(BaseModel):
+    """Create a transfer from one account to another."""
+
+    from_account_id: int
+    to_account_id: int
+    amount: Decimal = Field(gt=0)
+    note: str | None = Field(default=None, max_length=255)
+    occurred_at: datetime | None = None

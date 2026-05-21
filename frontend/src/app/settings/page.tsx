@@ -278,6 +278,13 @@ function SettingsInner({ user }: { user: UserMe }) {
             <span>📒 Direktori (Customer & Supplier)</span>
             <span className="text-slate-400">›</span>
           </Link>
+          <Link
+            href="/accounts"
+            className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-100"
+          >
+            <span>💼 Akun Kas (Multi-Akun + Transfer)</span>
+            <span className="text-slate-400">›</span>
+          </Link>
         </section>
       ) : null}
 

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from pengelola_keuangan.api.routers import (
+    accounts,
     admin,
     auth,
     billing,
@@ -61,6 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(billing.router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
     app.include_router(contacts.router, prefix="/api")
+    app.include_router(accounts.router, prefix="/api")
+    app.include_router(accounts.transfers_router, prefix="/api")
 
     return app
 

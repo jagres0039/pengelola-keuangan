@@ -59,6 +59,15 @@ class ContactKind(StrEnum):
     BOTH = "both"
 
 
+class AccountKind(StrEnum):
+    """Type of a cash/payment account (Pengusaha multi-account ledger)."""
+
+    CASH = "cash"
+    BANK = "bank"
+    EWALLET = "ewallet"
+    OTHER = "other"
+
+
 class User(Base):
     """User of the system (via Telegram bot, PWA, or both)."""
 
@@ -115,6 +124,9 @@ class User(Base):
     contacts: Mapped[list[Contact]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    accounts: Mapped[list[Account]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Category(Base):
@@ -158,6 +170,9 @@ class Transaction(Base):
         ForeignKey("categories.id", ondelete="SET NULL")
     )
     note: Mapped[str | None] = mapped_column(String(255))
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -167,6 +182,7 @@ class Transaction(Base):
 
     user: Mapped[User] = relationship(back_populates="transactions")
     category: Mapped[Category | None] = relationship(back_populates="transactions")
+    account: Mapped[Account | None] = relationship(back_populates="transactions")
     items: Mapped[list[TransactionItem]] = relationship(
         back_populates="transaction",
         cascade="all, delete-orphan",
@@ -310,3 +326,67 @@ class Contact(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="contacts")
+
+
+class Account(Base):
+    """Akun kas / payment account (Pengusaha multi-account ledger).
+
+    Existing standar users keep using a single implicit balance (NULL
+    ``account_id`` on transactions). Pengusaha users can create multiple
+    accounts and tag transactions per-account; per-account balance is
+    computed as ``opening_balance + sum(income) - sum(expense) + transfers_in
+    - transfers_out``.
+    """
+
+    __tablename__ = "accounts"
+    __table_args__ = (Index("ix_accounts_user_kind", "user_id", "kind"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[AccountKind] = mapped_column(String(16), default=AccountKind.CASH, nullable=False)
+    opening_balance: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0"), server_default="0", nullable=False
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship(back_populates="accounts")
+    transactions: Mapped[list[Transaction]] = relationship(back_populates="account")
+
+
+class Transfer(Base):
+    """Pemindahan saldo antar akun (e.g. tarik tunai dari BCA ke Kas).
+
+    Represented as a single row (not two ledger transactions) to keep the
+    history clean. Balance computation handles transfers separately.
+    """
+
+    __tablename__ = "transfers"
+    __table_args__ = (Index("ix_transfers_user_occurred", "user_id", "occurred_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    from_account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    to_account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    from_account: Mapped[Account] = relationship(foreign_keys=[from_account_id])
+    to_account: Mapped[Account] = relationship(foreign_keys=[to_account_id])

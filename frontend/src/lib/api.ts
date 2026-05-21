@@ -118,6 +118,8 @@ export type Transaction = {
   amount: string;
   category_id: number | null;
   category_name: string | null;
+  account_id: number | null;
+  account_name: string | null;
   note: string | null;
   occurred_at: string;
   items: TransactionItem[];
@@ -258,3 +260,43 @@ export type ContactCreatePayload = {
 };
 
 export type ContactUpdatePayload = Partial<ContactCreatePayload>;
+
+export type AccountKind = "cash" | "bank" | "ewallet" | "other";
+
+export type Account = {
+  id: number;
+  name: string;
+  kind: AccountKind;
+  opening_balance: string;
+  balance: string;
+  archived: boolean;
+  created_at: string;
+};
+
+export type AccountCreatePayload = {
+  name: string;
+  kind: AccountKind;
+  opening_balance?: string;
+};
+
+export type AccountUpdatePayload = Partial<AccountCreatePayload>;
+
+export type Transfer = {
+  id: number;
+  from_account_id: number;
+  from_account_name: string;
+  to_account_id: number;
+  to_account_name: string;
+  amount: string;
+  note: string | null;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type TransferCreatePayload = {
+  from_account_id: number;
+  to_account_id: number;
+  amount: string;
+  note?: string;
+  occurred_at?: string;
+};

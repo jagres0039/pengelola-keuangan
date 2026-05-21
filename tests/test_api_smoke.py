@@ -377,3 +377,179 @@ def test_contacts_data_isolation(client: TestClient) -> None:
     )
     # B can't delete
     assert client.delete(f"/api/contacts/{contact_id}", headers=b_h).status_code == 404
+
+
+def test_accounts_and_transfers(client: TestClient) -> None:
+    token = _register(client)
+    h = {"Authorization": f"Bearer {token}"}
+
+    # empty list
+    r = client.get("/api/accounts", headers=h)
+    assert r.status_code == 200
+    assert r.json() == []
+
+    # create cash account with opening_balance=100000
+    r = client.post(
+        "/api/accounts",
+        json={"name": "Kas Tunai", "kind": "cash", "opening_balance": "100000"},
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    cash = r.json()
+    assert Decimal(cash["balance"]) == Decimal("100000")
+    assert cash["kind"] == "cash"
+    assert cash["archived"] is False
+
+    # create bank account with 0 opening
+    r = client.post(
+        "/api/accounts",
+        json={"name": "BCA", "kind": "bank"},
+        headers=h,
+    )
+    bca = r.json()
+
+    # post income to cash
+    r = client.post(
+        "/api/transactions",
+        json={
+            "type": "in",
+            "amount": "50000",
+            "account_id": cash["id"],
+            "note": "jualan",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    tx_in = r.json()
+    assert tx_in["account_id"] == cash["id"]
+    assert tx_in["account_name"] == "Kas Tunai"
+
+    # post expense from cash
+    r = client.post(
+        "/api/transactions",
+        json={
+            "type": "out",
+            "amount": "20000",
+            "account_id": cash["id"],
+        },
+        headers=h,
+    )
+    assert r.status_code == 201
+
+    # cash balance = 100000 + 50000 - 20000 = 130000
+    r = client.get(f"/api/accounts/{cash['id']}", headers=h)
+    assert Decimal(r.json()["balance"]) == Decimal("130000")
+
+    # transfer 30000 cash -> bca
+    r = client.post(
+        "/api/transfers",
+        json={
+            "from_account_id": cash["id"],
+            "to_account_id": bca["id"],
+            "amount": "30000",
+            "note": "setor BCA",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    tr = r.json()
+    assert Decimal(tr["amount"]) == Decimal("30000")
+    assert tr["from_account_name"] == "Kas Tunai"
+    assert tr["to_account_name"] == "BCA"
+
+    # cash balance = 130000 - 30000 = 100000; bca = 0 + 30000 = 30000
+    r = client.get("/api/accounts", headers=h)
+    balances = {a["name"]: Decimal(a["balance"]) for a in r.json()}
+    assert balances["Kas Tunai"] == Decimal("100000")
+    assert balances["BCA"] == Decimal("30000")
+
+    # self-transfer rejected
+    r = client.post(
+        "/api/transfers",
+        json={
+            "from_account_id": cash["id"],
+            "to_account_id": cash["id"],
+            "amount": "1000",
+        },
+        headers=h,
+    )
+    assert r.status_code == 400
+
+    # negative amount rejected (validated by schema gt=0)
+    r = client.post(
+        "/api/transfers",
+        json={
+            "from_account_id": cash["id"],
+            "to_account_id": bca["id"],
+            "amount": "-5",
+        },
+        headers=h,
+    )
+    assert r.status_code == 422
+
+    # delete with refs returns 409
+    r = client.delete(f"/api/accounts/{cash['id']}", headers=h)
+    assert r.status_code == 409
+
+    # archive cash
+    r = client.post(f"/api/accounts/{cash['id']}/archive", headers=h)
+    assert r.status_code == 200
+    assert r.json()["archived"] is True
+
+    # list excludes archived by default
+    r = client.get("/api/accounts", headers=h)
+    names = [a["name"] for a in r.json()]
+    assert "Kas Tunai" not in names
+    assert "BCA" in names
+
+    # invalid account_id on transaction
+    r = client.post(
+        "/api/transactions",
+        json={"type": "in", "amount": "1000", "account_id": 999999},
+        headers=h,
+    )
+    assert r.status_code == 400
+
+
+def test_accounts_data_isolation(client: TestClient) -> None:
+    a_token = _register(client, "a-acc@example.com")
+    b_token = _register(client, "b-acc@example.com")
+    a_h = {"Authorization": f"Bearer {a_token}"}
+    b_h = {"Authorization": f"Bearer {b_token}"}
+
+    r = client.post(
+        "/api/accounts",
+        json={"name": "A's wallet", "opening_balance": "1000"},
+        headers=a_h,
+    )
+    acc_id = r.json()["id"]
+
+    # B can't see A's account
+    assert client.get("/api/accounts", headers=b_h).json() == []
+    assert client.get(f"/api/accounts/{acc_id}", headers=b_h).status_code == 404
+    assert (
+        client.patch(f"/api/accounts/{acc_id}", json={"name": "h4x"}, headers=b_h).status_code
+        == 404
+    )
+
+    # B can't reference A's account in a transfer
+    r = client.post("/api/accounts", json={"name": "B's wallet"}, headers=b_h)
+    b_acc = r.json()["id"]
+    r = client.post(
+        "/api/transfers",
+        json={
+            "from_account_id": acc_id,
+            "to_account_id": b_acc,
+            "amount": "100",
+        },
+        headers=b_h,
+    )
+    assert r.status_code == 404
+
+    # B can't reference A's account on a transaction
+    r = client.post(
+        "/api/transactions",
+        json={"type": "in", "amount": "100", "account_id": acc_id},
+        headers=b_h,
+    )
+    assert r.status_code == 400
