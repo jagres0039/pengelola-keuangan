@@ -390,3 +390,79 @@ class Transfer(Base):
 
     from_account: Mapped[Account] = relationship(foreign_keys=[from_account_id])
     to_account: Mapped[Account] = relationship(foreign_keys=[to_account_id])
+
+
+class MovementReason(StrEnum):
+    """Reason / source of an inventory movement."""
+
+    PURCHASE = "purchase"
+    SALE = "sale"
+    ADJUSTMENT = "adjustment"
+    INITIAL = "initial"
+
+
+class InventoryItem(Base):
+    """Inventory item (stok barang) for Pengusaha mode.
+
+    Current stock = sum(movements.qty_delta). Last unit cost is taken
+    from the most recent movement that has a non-NULL ``unit_cost``
+    (typically a purchase movement).
+    """
+
+    __tablename__ = "inventory_items"
+    __table_args__ = (Index("ix_inventory_user_name", "user_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    unit: Mapped[str] = mapped_column(String(16), default="pcs", nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    movements: Mapped[list[InventoryMovement]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="InventoryMovement.occurred_at.desc()",
+    )
+
+
+class InventoryMovement(Base):
+    """Single stock movement (in/out) of an inventory item.
+
+    Positive ``qty_delta`` = stock in (purchase / initial), negative =
+    stock out (sale / adjustment). ``unit_cost`` is optional; when set
+    it's the per-unit acquisition cost (for HPP / valuation).
+    """
+
+    __tablename__ = "inventory_movements"
+    __table_args__ = (
+        Index("ix_movements_user_occurred", "user_id", "occurred_at"),
+        Index("ix_movements_item_occurred", "inventory_item_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    inventory_item_id: Mapped[int] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False
+    )
+    qty_delta: Mapped[Decimal] = mapped_column(Numeric(18, 3), nullable=False)
+    unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    reason: Mapped[MovementReason] = mapped_column(
+        String(16), default=MovementReason.ADJUSTMENT, nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    item: Mapped[InventoryItem] = relationship(back_populates="movements")

@@ -16,6 +16,7 @@ from pengelola_keuangan.api.routers import (
     categories,
     contacts,
     export_import,
+    inventory,
     receipt,
     summary,
     transactions,
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(contacts.router, prefix="/api")
     app.include_router(accounts.router, prefix="/api")
     app.include_router(accounts.transfers_router, prefix="/api")
+    app.include_router(inventory.router, prefix="/api")
 
     return app
 

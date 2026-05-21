@@ -398,3 +398,64 @@ class TransferCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     note: str | None = Field(default=None, max_length=255)
     occurred_at: datetime | None = None
+
+
+# ----- Inventory / Stok (Pengusaha) -----
+
+
+class InventoryItemResponse(BaseModel):
+    """An inventory item with computed stock and last unit cost."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    sku: str | None
+    unit: str
+    stock: Decimal
+    last_cost: Decimal | None
+    archived: bool
+    created_at: datetime
+
+
+class InventoryItemCreate(BaseModel):
+    """Create a new inventory item, optionally with initial stock."""
+
+    name: str = Field(min_length=1, max_length=128)
+    sku: str | None = Field(default=None, max_length=64)
+    unit: str = Field(default="pcs", min_length=1, max_length=16)
+    initial_stock: Decimal = Field(default=Decimal("0"), ge=0)
+    initial_cost: Decimal | None = Field(default=None, ge=0)
+
+
+class InventoryItemUpdate(BaseModel):
+    """Patch inventory item metadata (not stock — use movements)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    sku: str | None = Field(default=None, max_length=64)
+    unit: str | None = Field(default=None, min_length=1, max_length=16)
+
+
+class InventoryMovementResponse(BaseModel):
+    """A single stock movement record."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    inventory_item_id: int
+    qty_delta: Decimal
+    unit_cost: Decimal | None
+    reason: Literal["purchase", "sale", "adjustment", "initial"]
+    note: str | None
+    occurred_at: datetime
+    created_at: datetime
+
+
+class InventoryMovementCreate(BaseModel):
+    """Create a stock movement (positive qty_delta = in, negative = out)."""
+
+    qty_delta: Decimal = Field(description="positive=stock in, negative=stock out")
+    unit_cost: Decimal | None = Field(default=None, ge=0)
+    reason: Literal["purchase", "sale", "adjustment", "initial"] = "adjustment"
+    note: str | None = Field(default=None, max_length=255)
+    occurred_at: datetime | None = None

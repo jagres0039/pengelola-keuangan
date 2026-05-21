@@ -300,3 +300,49 @@ export type TransferCreatePayload = {
   note?: string;
   occurred_at?: string;
 };
+
+export type MovementReason = "purchase" | "sale" | "adjustment" | "initial";
+
+export type InventoryItem = {
+  id: number;
+  name: string;
+  sku: string | null;
+  unit: string;
+  stock: string;
+  last_cost: string | null;
+  archived: boolean;
+  created_at: string;
+};
+
+export type InventoryItemCreatePayload = {
+  name: string;
+  sku?: string;
+  unit?: string;
+  initial_stock?: string;
+  initial_cost?: string;
+};
+
+export type InventoryItemUpdatePayload = {
+  name?: string;
+  sku?: string;
+  unit?: string;
+};
+
+export type InventoryMovement = {
+  id: number;
+  inventory_item_id: number;
+  qty_delta: string;
+  unit_cost: string | null;
+  reason: MovementReason;
+  note: string | null;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type InventoryMovementCreatePayload = {
+  qty_delta: string;
+  unit_cost?: string;
+  reason: MovementReason;
+  note?: string;
+  occurred_at?: string;
+};
