@@ -265,3 +265,115 @@ def test_profile_mode_default_and_toggle(client: TestClient) -> None:
     r = client.patch("/api/auth/me", json={"profile_mode": "standar"}, headers=h)
     assert r.status_code == 200
     assert r.json()["profile_mode"] == "standar"
+
+
+def test_contacts_crud(client: TestClient) -> None:
+    token = _register(client)
+    h = {"Authorization": f"Bearer {token}"}
+
+    # empty list
+    r = client.get("/api/contacts", headers=h)
+    assert r.status_code == 200
+    assert r.json() == []
+
+    # create customer
+    r = client.post(
+        "/api/contacts",
+        json={
+            "name": "Toko Maju Jaya",
+            "kind": "customer",
+            "phone": "081234567890",
+            "address": "Jl. Mawar 1",
+            "notes": "langganan setia",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    customer = r.json()
+    assert customer["kind"] == "customer"
+    assert customer["archived"] is False
+
+    # create supplier
+    r = client.post(
+        "/api/contacts",
+        json={"name": "PT Pemasok Bahan", "kind": "supplier"},
+        headers=h,
+    )
+    assert r.status_code == 201
+    supplier = r.json()
+
+    # list returns both (sorted by name)
+    r = client.get("/api/contacts", headers=h)
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 2
+    assert rows[0]["name"] == "PT Pemasok Bahan"
+    assert rows[1]["name"] == "Toko Maju Jaya"
+
+    # filter by kind=customer
+    r = client.get("/api/contacts?kind=customer", headers=h)
+    assert len(r.json()) == 1
+    assert r.json()[0]["id"] == customer["id"]
+
+    # search
+    r = client.get("/api/contacts?q=maju", headers=h)
+    assert len(r.json()) == 1
+
+    # patch
+    r = client.patch(
+        f"/api/contacts/{customer['id']}",
+        json={"phone": "0811-9999"},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert r.json()["phone"] == "0811-9999"
+
+    # archive (soft-delete)
+    r = client.post(f"/api/contacts/{customer['id']}/archive", headers=h)
+    assert r.status_code == 200
+    assert r.json()["archived"] is True
+
+    # default list excludes archived
+    r = client.get("/api/contacts", headers=h)
+    assert len(r.json()) == 1
+
+    # include_archived=true brings it back
+    r = client.get("/api/contacts?include_archived=true", headers=h)
+    assert len(r.json()) == 2
+
+    # unarchive
+    r = client.post(f"/api/contacts/{customer['id']}/unarchive", headers=h)
+    assert r.status_code == 200
+    assert r.json()["archived"] is False
+
+    # invalid kind on create -> 422
+    r = client.post("/api/contacts", json={"name": "X", "kind": "stranger"}, headers=h)
+    assert r.status_code == 422
+
+    # hard delete supplier
+    r = client.delete(f"/api/contacts/{supplier['id']}", headers=h)
+    assert r.status_code == 204
+    r = client.get("/api/contacts", headers=h)
+    assert len(r.json()) == 1
+
+
+def test_contacts_data_isolation(client: TestClient) -> None:
+    a_token = _register(client, "a@example.com")
+    b_token = _register(client, "b@example.com")
+    a_h = {"Authorization": f"Bearer {a_token}"}
+    b_h = {"Authorization": f"Bearer {b_token}"}
+
+    r = client.post("/api/contacts", json={"name": "Customer A"}, headers=a_h)
+    contact_id = r.json()["id"]
+
+    # B can't see A's contact
+    assert client.get("/api/contacts", headers=b_h).json() == []
+    # B can't fetch A's contact directly
+    assert client.get(f"/api/contacts/{contact_id}", headers=b_h).status_code == 404
+    # B can't patch
+    assert (
+        client.patch(f"/api/contacts/{contact_id}", json={"name": "h4x"}, headers=b_h).status_code
+        == 404
+    )
+    # B can't delete
+    assert client.delete(f"/api/contacts/{contact_id}", headers=b_h).status_code == 404

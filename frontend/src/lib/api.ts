@@ -235,3 +235,26 @@ export type AdminPayment = Payment & {
   user_email: string | null;
   user_first_name: string | null;
 };
+
+export type ContactKind = "customer" | "supplier" | "both";
+
+export type Contact = {
+  id: number;
+  name: string;
+  kind: ContactKind;
+  phone: string | null;
+  address: string | null;
+  notes: string | null;
+  archived: boolean;
+  created_at: string;
+};
+
+export type ContactCreatePayload = {
+  name: string;
+  kind: ContactKind;
+  phone?: string;
+  address?: string;
+  notes?: string;
+};
+
+export type ContactUpdatePayload = Partial<ContactCreatePayload>;
