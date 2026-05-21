@@ -81,6 +81,8 @@ export const api = {
 
 // ----- typed payloads -----
 
+export type ProfileMode = "standar" | "pengusaha";
+
 export type UserMe = {
   id: number;
   email: string | null;
@@ -91,6 +93,7 @@ export type UserMe = {
   telegram_linked: boolean;
   low_balance_threshold: string;
   is_admin: boolean;
+  profile_mode: ProfileMode;
 };
 
 export type Category = {

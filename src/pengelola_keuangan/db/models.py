@@ -39,6 +39,18 @@ class RecurringFrequency(StrEnum):
     MONTHLY = "monthly"
 
 
+class ProfileMode(StrEnum):
+    """Profile mode of a user (toggles which UI/features are exposed).
+
+    - ``STANDAR``: catatan pemasukan & pengeluaran biasa (default).
+    - ``PENGUSAHA``: tambah fitur khusus pengusaha (piutang, hutang, stok,
+      laporan SAK EMKM, dll). Diaktifkan via toggle di halaman Setelan.
+    """
+
+    STANDAR = "standar"
+    PENGUSAHA = "pengusaha"
+
+
 class User(Base):
     """User of the system (via Telegram bot, PWA, or both)."""
 
@@ -64,6 +76,9 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    profile_mode: Mapped[ProfileMode] = mapped_column(
+        String(16), default=ProfileMode.STANDAR, server_default=ProfileMode.STANDAR, nullable=False
+    )
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     subscription_ends_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
