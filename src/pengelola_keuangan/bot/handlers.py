@@ -5,7 +5,9 @@ from __future__ import annotations
 import io
 import logging
 from collections.abc import Callable, Coroutine
-from decimal import Decimal
+from datetime import UTC
+from datetime import datetime as datetime_t
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from sqlalchemy.orm import Session
@@ -23,6 +25,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from pengelola_keuangan.bot import messages
+from pengelola_keuangan.config import get_settings
 from pengelola_keuangan.db.models import TransactionType, User
 from pengelola_keuangan.db.session import session_scope
 from pengelola_keuangan.services import budgets as budgets_svc
@@ -30,7 +33,9 @@ from pengelola_keuangan.services import categories as categories_svc
 from pengelola_keuangan.services import charts as charts_svc
 from pengelola_keuangan.services import exporting as exporting_svc
 from pengelola_keuangan.services import importing as importing_svc
+from pengelola_keuangan.services import receipt_ocr as receipt_ocr_svc
 from pengelola_keuangan.services import recurring as recurring_svc
+from pengelola_keuangan.services import subscriptions as subscriptions_svc
 from pengelola_keuangan.services import transactions as transactions_svc
 from pengelola_keuangan.services import users as users_svc
 from pengelola_keuangan.services.formatting import format_money, format_month
@@ -60,6 +65,7 @@ logger = logging.getLogger(__name__)
 # Context storage keys.
 PENDING_IMPORT_KEY = "pending_import"
 PENDING_DELETE_KEY = "pending_delete"
+PENDING_RECEIPT_KEY = "pending_receipt"
 
 
 def _require_message(update: Update) -> Message:
@@ -108,6 +114,15 @@ def _with_user(
             await handler(update, context, session, user)
 
     return wrapper
+
+
+async def _ensure_can_write(message: Message, session: Session, user: User) -> bool:
+    """Send a read-only error to the user and return False if their subscription is expired."""
+    status = subscriptions_svc.get_status(user, session)
+    if status.can_write:
+        return True
+    await _send(message, messages.subscription_expired_text(status))
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -210,6 +225,8 @@ async def _record_transaction(
         user: User,
     ) -> None:
         message = _require_message(update_)
+        if not await _ensure_can_write(message, session, user):
+            return
         args = context_.args or []
         if not args:
             verb = "Pemasukan" if transaction_type is TransactionType.INCOME else "Pengeluaran"
@@ -348,6 +365,8 @@ async def delete_command(
 ) -> None:
     """Handle /delete <id>."""
     message = _require_message(update)
+    if not await _ensure_can_write(message, session, user):
+        return
     args = context.args or []
     if not args:
         await _send(message, "❌ Format: `/delete <id>`")
@@ -373,6 +392,8 @@ async def edit_command(
 ) -> None:
     """Handle /edit <id> <field> <value...>."""
     message = _require_message(update)
+    if not await _ensure_can_write(message, session, user):
+        return
     args = context.args or []
     if len(args) < 3:
         await _send(
@@ -534,6 +555,9 @@ async def budget_command(
     if not args:
         statuses = budgets_svc.list_budget_status(session, user.id, user.timezone)
         await _send(message, messages.budget_status_text(statuses, user.currency))
+        return
+
+    if not await _ensure_can_write(message, session, user):
         return
 
     sub = args[0].lower()
@@ -753,6 +777,12 @@ async def import_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             username=tg_user.username,
             first_name=tg_user.first_name,
         )
+        if not subscriptions_svc.get_status(user, session).can_write:
+            await query.edit_message_text(
+                messages.subscription_expired_text(subscriptions_svc.get_status(user, session)),
+            )
+            context.user_data.pop(PENDING_IMPORT_KEY, None)  # type: ignore[union-attr]
+            return
         rows, parse_errors = importing_svc.parse_import_rows(file_bytes, user.timezone)
         existing = []
         for year, month in months:
@@ -856,3 +886,623 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     _ = context
     message = _require_message(update)
     await _send(message, "❓ Perintah tidak dikenal. Ketik /help untuk daftar perintah.")
+
+
+# --------------------------------------------------------------------------- #
+# Receipt OCR (kirim foto struk -> Gemini Vision)
+# --------------------------------------------------------------------------- #
+
+
+async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a photo upload as a receipt OCR request."""
+    message = _require_message(update)
+    tg_user = _require_user(update)
+    if not users_svc.is_user_allowed(tg_user.id):
+        await _send(message, messages.access_denied())
+        return
+
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        await _send(message, messages.receipt_disabled())
+        return
+
+    photos = message.photo or ()
+    document = message.document
+    image_bytes: bytes | None = None
+    mime_type = "image/jpeg"
+
+    if photos:
+        photo = max(photos, key=lambda p: (p.width or 0) * (p.height or 0))
+        file = await photo.get_file()
+        bio = io.BytesIO()
+        await file.download_to_memory(out=bio)
+        image_bytes = bio.getvalue()
+    elif document is not None and (document.mime_type or "").startswith("image/"):
+        file = await document.get_file()
+        bio = io.BytesIO()
+        await file.download_to_memory(out=bio)
+        image_bytes = bio.getvalue()
+        mime_type = document.mime_type or "image/jpeg"
+
+    if image_bytes is None:
+        return
+
+    with session_scope() as session:
+        user, _ = users_svc.ensure_user(
+            session,
+            tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        if not await _ensure_can_write(message, session, user):
+            return
+        expense_categories = categories_svc.list_categories(
+            session, user.id, TransactionType.EXPENSE
+        )
+        category_names = [c.name for c in expense_categories]
+        user_currency = user.currency
+        user_tz = user.timezone
+
+    notice = await message.reply_text(messages.receipt_scanning())
+
+    try:
+        result = receipt_ocr_svc.parse_receipt(
+            image_bytes,
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            mime_type=mime_type,
+            category_hints=category_names,
+            default_currency=user_currency,
+        )
+    except receipt_ocr_svc.ReceiptParseError as exc:
+        logger.warning("Receipt parse failed: %s", exc)
+        try:
+            await notice.edit_text(messages.receipt_parse_failed(str(exc)))
+        except Exception:
+            await message.reply_text(messages.receipt_parse_failed(str(exc)))
+        return
+
+    if not result.is_receipt:
+        try:
+            await notice.edit_text(messages.receipt_not_a_receipt())
+        except Exception:
+            await message.reply_text(messages.receipt_not_a_receipt())
+        return
+
+    if result.total_amount <= 0:
+        try:
+            await notice.edit_text(
+                messages.receipt_parse_failed("Total tidak terdeteksi dari struk.")
+            )
+        except Exception:
+            await message.reply_text(
+                messages.receipt_parse_failed("Total tidak terdeteksi dari struk.")
+            )
+        return
+
+    # Determine which existing category matches the suggestion (case-insensitive).
+    chosen_name: str | None = None
+    if result.suggested_category:
+        suggestion = result.suggested_category.strip().lower()
+        for name in category_names:
+            if name.lower() == suggestion:
+                chosen_name = name
+                break
+
+    display_category = chosen_name or result.suggested_category or "Lainnya"
+
+    items_serialized = [
+        {
+            "name": item.name,
+            "qty": str(item.qty),
+            "unit_price": str(item.unit_price) if item.unit_price is not None else None,
+            "subtotal": str(item.subtotal),
+        }
+        for item in result.items
+    ]
+    pending = {
+        "merchant": result.merchant,
+        "amount": str(result.total_amount),
+        "occurred_at": result.occurred_at.isoformat() if result.occurred_at else None,
+        "category_name": chosen_name,
+        "notes": result.notes,
+        "items": items_serialized,
+    }
+    context.user_data[PENDING_RECEIPT_KEY] = pending  # type: ignore[index]
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Simpan", callback_data="receipt:save"),
+                InlineKeyboardButton("❌ Batal", callback_data="receipt:cancel"),
+            ]
+        ]
+    )
+    preview_items: list[tuple[str, Decimal, Decimal]] = [
+        (item.name, item.qty, item.subtotal) for item in result.items
+    ]
+    preview = messages.receipt_preview(
+        merchant=result.merchant,
+        amount=result.total_amount,
+        currency=user_currency,
+        occurred_at=result.occurred_at,
+        category_name=display_category,
+        notes=result.notes,
+        tz_name=user_tz,
+        items=preview_items,
+    )
+    try:
+        await notice.edit_text(preview, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+    except Exception:
+        await message.reply_text(preview, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
+
+
+async def receipt_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle Save/Cancel buttons under a receipt preview."""
+    query = update.callback_query
+    if query is None or query.data is None:
+        return
+    await query.answer()
+
+    pending = cast(dict[str, object] | None, context.user_data.get(PENDING_RECEIPT_KEY))  # type: ignore[union-attr]
+
+    if query.data == "receipt:cancel":
+        context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
+        await query.edit_message_text(messages.receipt_cancelled())
+        return
+
+    if query.data != "receipt:save":
+        return
+
+    if pending is None:
+        await query.edit_message_text("⌛ Tidak ada struk yang menunggu.")
+        return
+
+    tg_user = _require_user(update)
+    if not users_svc.is_user_allowed(tg_user.id):
+        await query.edit_message_text(messages.access_denied())
+        return
+
+    amount = Decimal(cast(str, pending["amount"]))
+    occurred_at_iso = cast(str | None, pending.get("occurred_at"))
+    occurred_at: datetime_t | None = None
+    if occurred_at_iso:
+        try:
+            occurred_at = datetime_t.fromisoformat(occurred_at_iso)
+        except ValueError:
+            occurred_at = None
+
+    merchant = cast(str, pending.get("merchant") or "")
+    category_name = cast(str | None, pending.get("category_name"))
+    notes = cast(str, pending.get("notes") or "")
+    raw_items = cast(list[dict[str, object]], pending.get("items") or [])
+    item_inputs: list[transactions_svc.ItemInput] = []
+    for raw_item in raw_items:
+        try:
+            name = str(raw_item.get("name") or "").strip()
+            if not name:
+                continue
+            qty = Decimal(cast(str, raw_item.get("qty") or "1"))
+            up_raw = raw_item.get("unit_price")
+            unit_price = Decimal(cast(str, up_raw)) if up_raw else None
+            subtotal = Decimal(cast(str, raw_item.get("subtotal") or "0"))
+            item_inputs.append(
+                transactions_svc.ItemInput(
+                    name=name,
+                    qty=qty if qty > 0 else Decimal("1"),
+                    unit_price=unit_price,
+                    subtotal=subtotal,
+                )
+            )
+        except (InvalidOperation, ValueError):
+            continue
+
+    note_parts: list[str] = []
+    if merchant:
+        note_parts.append(merchant)
+    if notes and notes.lower() != merchant.lower():
+        note_parts.append(notes)
+    note = " — ".join(note_parts) if note_parts else None
+
+    with session_scope() as session:
+        user, _ = users_svc.ensure_user(
+            session,
+            tg_user.id,
+            username=tg_user.username,
+            first_name=tg_user.first_name,
+        )
+        if not subscriptions_svc.get_status(user, session).can_write:
+            await query.edit_message_text(
+                messages.subscription_expired_text(subscriptions_svc.get_status(user, session)),
+            )
+            context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
+            return
+        if category_name:
+            category = categories_svc.get_or_create_category(
+                session, user.id, category_name, TransactionType.EXPENSE
+            )
+        else:
+            category = categories_svc.fallback_category(session, user.id, TransactionType.EXPENSE)
+
+        transaction = transactions_svc.create_transaction(
+            session,
+            user_id=user.id,
+            transaction_type=TransactionType.EXPENSE,
+            amount=amount,
+            category_id=category.id,
+            note=note,
+            occurred_at=occurred_at,
+            user_tz=user.timezone,
+            items=item_inputs or None,
+        )
+        currency = user.currency
+        msg = messages.receipt_saved(transaction, category, currency)
+
+    context.user_data.pop(PENDING_RECEIPT_KEY, None)  # type: ignore[union-attr]
+    await query.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+
+# --------------------------------------------------------------------------- #
+# /link — bind PWA email account to this Telegram chat
+# --------------------------------------------------------------------------- #
+
+
+async def link_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /link <CODE> — link this Telegram chat to a PWA email account.
+
+    Flow:
+    1. User registers on PWA (email + password) -> gets a 6-char link code
+    2. User opens bot and types /link ABC123
+    3. Bot validates code & expiry, then merges the two User rows:
+       - Telegram user's transactions/categories/budgets/recurring move to PWA user
+       - Telegram user row is deleted; PWA user gets telegram_user_id set
+       - From now on, bot & PWA share the same data
+    """
+    from sqlalchemy import select as _select
+
+    message = _require_message(update)
+    tg_user = _require_user(update)
+    if not users_svc.is_user_allowed(tg_user.id):
+        await _send(message, messages.access_denied())
+        return
+
+    args = context.args or []
+    if not args:
+        await _send(
+            message,
+            "🔗 *Link akun PWA*\n\n"
+            "1. Login di PWA → menu *Settings* → *Hubungkan ke Telegram*\n"
+            "2. Copy kode 6-huruf yang muncul\n"
+            "3. Kirim ke bot: `/link KODE`\n\n"
+            "Kode berlaku 15 menit.",
+        )
+        return
+
+    code = args[0].strip().upper()
+    if not code or len(code) > 16:
+        await _send(message, "❌ Format: `/link <KODE>` (6-16 huruf).")
+        return
+
+    with session_scope() as session:
+        from datetime import datetime
+
+        pwa_user = session.scalar(_select(User).where(User.link_code == code))
+        if pwa_user is None:
+            await _send(message, "❌ Kode tidak valid atau sudah kadaluarsa.")
+            return
+        if pwa_user.link_code_expires_at is None or pwa_user.link_code_expires_at < datetime.now(
+            UTC
+        ):
+            await _send(message, "❌ Kode sudah kadaluarsa. Generate ulang di PWA.")
+            return
+        if pwa_user.telegram_user_id is not None and pwa_user.telegram_user_id != tg_user.id:
+            await _send(
+                message,
+                "❌ Akun PWA ini sudah ditautkan ke chat Telegram lain.",
+            )
+            return
+
+        # Existing Telegram-only user (created previously via bot)?
+        existing = session.scalar(_select(User).where(User.telegram_user_id == tg_user.id))
+        if existing is not None and existing.id != pwa_user.id:
+            # Merge: move all data from existing -> pwa_user.
+            from pengelola_keuangan.db.models import (
+                Budget as _B,
+            )
+            from pengelola_keuangan.db.models import (
+                Category as _C,
+            )
+            from pengelola_keuangan.db.models import (
+                Recurring as _R,
+            )
+            from pengelola_keuangan.db.models import (
+                Transaction as _T,
+            )
+
+            # 1. Copy any non-default categories from the Telegram-only user that
+            #    don't yet exist on the PWA user. Flush so we have IDs to re-point to.
+            pwa_cats: dict[tuple[str, TransactionType], _C] = {
+                (c.name.lower(), c.type): c
+                for c in session.scalars(_select(_C).where(_C.user_id == pwa_user.id))
+            }
+            for cat in list(session.scalars(_select(_C).where(_C.user_id == existing.id))):
+                key = (cat.name.lower(), cat.type)
+                if key in pwa_cats:
+                    continue
+                new_cat = _C(
+                    user_id=pwa_user.id,
+                    name=cat.name,
+                    type=cat.type,
+                    emoji=cat.emoji,
+                    is_default=cat.is_default,
+                )
+                session.add(new_cat)
+                pwa_cats[key] = new_cat
+            session.flush()
+
+            # 2. Re-point transactions onto the PWA user using the now-complete category map.
+            for tx in session.scalars(_select(_T).where(_T.user_id == existing.id)):
+                tx.user_id = pwa_user.id
+                if tx.category is not None:
+                    match = pwa_cats.get((tx.category.name.lower(), tx.type))
+                    if match is not None:
+                        tx.category_id = match.id
+
+            # 3. Re-point recurring templates similarly.
+            for rec in session.scalars(_select(_R).where(_R.user_id == existing.id)):
+                rec.user_id = pwa_user.id
+                if rec.category is not None:
+                    match = pwa_cats.get((rec.category.name.lower(), rec.type))
+                    if match is not None:
+                        rec.category_id = match.id
+
+            # 4. Copy budgets (skip if PWA user already has one for that category-by-name).
+            pwa_budget_cat_names = {
+                c.name.lower()
+                for c in session.scalars(
+                    _select(_C).join(_B, _B.category_id == _C.id).where(_B.user_id == pwa_user.id)
+                )
+            }
+            for budget in session.scalars(_select(_B).where(_B.user_id == existing.id)):
+                cat_name = budget.category.name.lower()
+                if cat_name in pwa_budget_cat_names:
+                    continue
+                match = pwa_cats.get((cat_name, TransactionType.EXPENSE))
+                if match is None:
+                    continue
+                session.add(
+                    _B(
+                        user_id=pwa_user.id,
+                        category_id=match.id,
+                        monthly_limit=budget.monthly_limit,
+                    )
+                )
+
+            session.flush()
+            # Now delete existing telegram-only user (cascade removes leftovers)
+            session.delete(existing)
+            session.flush()
+
+        pwa_user.telegram_user_id = tg_user.id
+        if tg_user.username and not pwa_user.username:
+            pwa_user.username = tg_user.username
+        if tg_user.first_name and not pwa_user.first_name:
+            pwa_user.first_name = tg_user.first_name
+        pwa_user.link_code = None
+        pwa_user.link_code_expires_at = None
+        session.flush()
+        email = pwa_user.email or "(tanpa email)"
+
+    await _send(
+        message,
+        f"✅ Akun PWA *{email}* sudah ditautkan!\nSekarang data lo sama di bot & PWA.",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# /billing — show subscription status + payment instructions
+# /pay <amount> [method] [note] — submit a payment claim
+# /approve <payment_id> — admin only
+# /reject <payment_id> <reason...> — admin only
+# --------------------------------------------------------------------------- #
+
+
+@_with_user
+async def billing_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Show subscription status + payment instructions."""
+    _ = context
+    message = _require_message(update)
+    settings = get_settings()
+    status = subscriptions_svc.get_status(user, session)
+    await _send(message, messages.billing_status_text(status, settings.billing_instructions))
+
+
+@_with_user
+async def pay_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Submit a manual-transfer payment claim awaiting admin verification."""
+    message = _require_message(update)
+    args = context.args or []
+    if not args:
+        await _send(
+            message,
+            "❌ Format: `/pay <nominal> [metode] [catatan]`\n"
+            "Contoh: `/pay 5000 bca transfer atas nama Budi`",
+        )
+        return
+
+    try:
+        amount = parse_amount(args[0])
+    except ParseError as exc:
+        await _send(message, messages.parse_error_message(str(exc)))
+        return
+
+    method = args[1] if len(args) > 1 else "transfer"
+    proof_note = " ".join(args[2:]).strip() or None
+
+    try:
+        payment = subscriptions_svc.submit_payment(
+            session=session,
+            user=user,
+            amount=amount,
+            method=method,
+            proof_note=proof_note,
+        )
+    except ValueError as exc:
+        await _send(message, f"❌ {exc}")
+        return
+
+    await _send(
+        message, messages.payment_submitted_text(payment.id, payment.amount, payment.method)
+    )
+
+    # Notify all admins (if any) via Telegram DM
+    from sqlalchemy import select as _select
+
+    admin_ids: list[int] = []
+    for admin in session.scalars(_select(User).where(User.is_admin.is_(True))).all():
+        if admin.telegram_user_id and admin.telegram_user_id != user.telegram_user_id:
+            admin_ids.append(admin.telegram_user_id)
+
+    notify_text = (
+        f"📨 Pembayaran baru #{payment.id}\n"
+        f"User: {user.first_name or user.email or user.username or user.id}\n"
+        f"Nominal: Rp {payment.amount:,.0f}\n"
+        f"Metode: {payment.method}\n"
+    )
+    if payment.proof_note:
+        notify_text += f"Catatan: {payment.proof_note}\n"
+    notify_text += f"\nApprove: `/approve {payment.id}`\nTolak: `/reject {payment.id} <alasan>`"
+
+    bot = context.bot
+    for admin_chat_id in admin_ids:
+        try:
+            await bot.send_message(admin_chat_id, notify_text, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            logger.warning("failed to notify admin %s", admin_chat_id, exc_info=True)
+
+
+@_with_user
+async def approve_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Admin-only: /approve <payment_id> — approve a pending payment, extend subscription 30 days."""
+    message = _require_message(update)
+    if not user.is_admin:
+        await _send(message, messages.admin_only_text())
+        return
+    args = context.args or []
+    if not args:
+        await _send(message, "❌ Format: `/approve <payment_id>`")
+        return
+    try:
+        payment_id = int(args[0].lstrip("#"))
+    except ValueError:
+        await _send(message, "❌ Payment ID harus angka.")
+        return
+
+    from sqlalchemy import select as _select
+
+    from pengelola_keuangan.db.models import Payment as _P
+
+    payment = session.execute(_select(_P).where(_P.id == payment_id)).scalar_one_or_none()
+    if payment is None:
+        await _send(message, f"❌ Payment #{payment_id} tidak ditemukan.")
+        return
+
+    try:
+        payment = subscriptions_svc.approve_payment(session=session, payment=payment, admin=user)
+    except ValueError as exc:
+        await _send(message, f"❌ {exc}")
+        return
+
+    target_user = payment.user
+    await _send(
+        message,
+        f"✅ Payment #{payment.id} disetujui.\n"
+        f"User: {target_user.first_name or target_user.email or target_user.id}\n"
+        f"Aktif sampai: {payment.period_end.strftime('%d %b %Y') if payment.period_end else '—'}",
+    )
+
+    # Notify the user
+    if target_user.telegram_user_id:
+        try:
+            await context.bot.send_message(
+                target_user.telegram_user_id,
+                messages.payment_approved_text(payment.amount, payment.period_end),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            logger.warning("failed to notify user %s of approval", target_user.id, exc_info=True)
+
+
+@_with_user
+async def reject_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    session: Session,
+    user: User,
+) -> None:
+    """Admin-only: /reject <payment_id> <reason...> — reject a pending payment with reason."""
+    message = _require_message(update)
+    if not user.is_admin:
+        await _send(message, messages.admin_only_text())
+        return
+    args = context.args or []
+    if len(args) < 2:
+        await _send(message, "❌ Format: `/reject <payment_id> <alasan>`")
+        return
+    try:
+        payment_id = int(args[0].lstrip("#"))
+    except ValueError:
+        await _send(message, "❌ Payment ID harus angka.")
+        return
+    reason = " ".join(args[1:]).strip()
+    if not reason:
+        await _send(message, "❌ Alasan tidak boleh kosong.")
+        return
+
+    from sqlalchemy import select as _select
+
+    from pengelola_keuangan.db.models import Payment as _P
+
+    payment = session.execute(_select(_P).where(_P.id == payment_id)).scalar_one_or_none()
+    if payment is None:
+        await _send(message, f"❌ Payment #{payment_id} tidak ditemukan.")
+        return
+
+    try:
+        payment = subscriptions_svc.reject_payment(
+            session=session,
+            payment=payment,
+            admin=user,
+            reason=reason,
+        )
+    except ValueError as exc:
+        await _send(message, f"❌ {exc}")
+        return
+
+    target_user = payment.user
+    await _send(message, f"✅ Payment #{payment.id} ditolak.")
+
+    if target_user.telegram_user_id:
+        try:
+            await context.bot.send_message(
+                target_user.telegram_user_id,
+                messages.payment_rejected_text(payment.amount, reason),
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception:
+            logger.warning("failed to notify user %s of rejection", target_user.id, exc_info=True)

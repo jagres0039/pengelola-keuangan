@@ -23,6 +23,8 @@ async def reminder_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     with session_scope() as session:
         users = list(session.scalars(select(User).where(User.reminder_enabled.is_(True))))
         for user in users:
+            if user.telegram_user_id is None:
+                continue
             local: datetime = now_in(user.timezone or "Asia/Jakarta")
             if local.hour == user.reminder_hour and local.minute < 5:
                 pending.append((user.telegram_user_id, user.currency))
