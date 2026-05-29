@@ -346,3 +346,72 @@ export type InventoryMovementCreatePayload = {
   note?: string;
   occurred_at?: string;
 };
+
+export type SalePaymentMethod = "cash" | "debit" | "credit" | "unpaid";
+export type SalePaymentStatus = "paid" | "unpaid" | "partial";
+
+export type SaleItem = {
+  id: number;
+  inventory_item_id: number | null;
+  name: string;
+  qty: string;
+  unit_price: string;
+  unit_cost: string;
+  subtotal: string;
+  profit: string;
+};
+
+export type Sale = {
+  id: number;
+  contact_id: number | null;
+  contact_name: string | null;
+  payment_method: SalePaymentMethod;
+  payment_status: SalePaymentStatus;
+  account_id: number | null;
+  account_name: string | null;
+  transaction_id: number | null;
+  total_amount: string;
+  paid_amount: string;
+  profit: string;
+  note: string | null;
+  paid_at: string | null;
+  occurred_at: string;
+  created_at: string;
+  items: SaleItem[];
+};
+
+export type SaleItemInput = {
+  inventory_item_id?: number | null;
+  name: string;
+  qty: string;
+  unit_price: string;
+  unit_cost?: string;
+};
+
+export type SaleCreatePayload = {
+  contact_id?: number | null;
+  payment_method: SalePaymentMethod;
+  account_id?: number | null;
+  items: SaleItemInput[];
+  note?: string;
+  occurred_at?: string;
+};
+
+export type SaleMarkPaidPayload = {
+  account_id?: number | null;
+  paid_amount?: string;
+  payment_method?: SalePaymentMethod;
+  occurred_at?: string;
+};
+
+export type SalesSummary = {
+  period_from: string;
+  period_to: string;
+  revenue: string;
+  cost: string;
+  profit: string;
+  items_sold: string;
+  sales_count: number;
+  unpaid_count: number;
+  unpaid_amount: string;
+};

@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
+import { Settings, TrendingUp, TrendingDown, ShoppingBag, Camera } from "lucide-react";
 import {
   api,
   type LowBalanceStatus,
+  type SalesSummary,
   type SubscriptionStatus,
   type Summary,
   type UserMe,
@@ -21,6 +23,7 @@ function DashboardInner({ user }: { user: UserMe }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [lowBalance, setLowBalance] = useState<LowBalanceStatus | null>(null);
   const [sub, setSub] = useState<SubscriptionStatus | null>(null);
+  const [salesSummary, setSalesSummary] = useState<SalesSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,7 +43,15 @@ function DashboardInner({ user }: { user: UserMe }) {
       .catch(() => {
         /* non-fatal */
       });
-  }, []);
+    if (user.profile_mode === "pengusaha") {
+      api
+        .get<SalesSummary>("/sales/summary")
+        .then(setSalesSummary)
+        .catch(() => {
+          /* non-fatal */
+        });
+    }
+  }, [user.profile_mode]);
 
   const monthName = summary
     ? new Date(summary.year, summary.month - 1).toLocaleDateString("id-ID", {
@@ -62,7 +73,7 @@ function DashboardInner({ user }: { user: UserMe }) {
           href="/settings"
           className="grid h-10 w-10 place-items-center rounded-full bg-white shadow"
         >
-          ⚙️
+          <Settings size={18} className="text-slate-600" />
         </Link>
       </header>
 
@@ -170,29 +181,105 @@ function DashboardInner({ user }: { user: UserMe }) {
         </div>
       </section>
 
-      <section className="mx-4 mt-6 grid grid-cols-2 gap-3">
+      <section
+        className={
+          "mx-4 mt-6 grid gap-3 " +
+          (user.profile_mode === "pengusaha"
+            ? "grid-cols-3"
+            : "grid-cols-2")
+        }
+      >
         <Link
           href="/add?type=in"
-          className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-emerald-100 px-4 py-5 text-emerald-700 shadow-sm"
+          className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-emerald-100 px-3 py-5 text-emerald-700 shadow-sm"
         >
-          <span className="text-2xl">💰</span>
-          <span className="text-sm font-semibold">Catat Masuk</span>
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-200/50">
+            <TrendingUp size={22} className="text-emerald-700" strokeWidth={2.5} />
+          </span>
+          <span className="text-xs font-semibold sm:text-sm">Catat Masuk</span>
         </Link>
         <Link
           href="/add?type=out"
-          className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-rose-100 px-4 py-5 text-rose-700 shadow-sm"
+          className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-rose-100 px-3 py-5 text-rose-700 shadow-sm"
         >
-          <span className="text-2xl">💸</span>
-          <span className="text-sm font-semibold">Catat Keluar</span>
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-rose-200/50">
+            <TrendingDown size={22} className="text-rose-700" strokeWidth={2.5} />
+          </span>
+          <span className="text-xs font-semibold sm:text-sm">Catat Keluar</span>
         </Link>
+        {user.profile_mode === "pengusaha" ? (
+          <Link
+            href="/sales"
+            className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-amber-100 px-3 py-5 text-amber-700 shadow-sm"
+          >
+            <span className="grid h-10 w-10 place-items-center rounded-full bg-amber-200/50">
+              <ShoppingBag size={22} className="text-amber-700" strokeWidth={2.5} />
+            </span>
+            <span className="text-xs font-semibold sm:text-sm">Catat Jual</span>
+          </Link>
+        ) : null}
       </section>
+
+      {user.profile_mode === "pengusaha" && salesSummary ? (
+        <section className="mx-4 mt-4 rounded-2xl bg-white p-4 shadow-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Pengusaha — bulan ini
+            </h2>
+            <Link href="/sales" className="text-xs font-medium text-brand-600">
+              Lihat semua →
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-emerald-50 px-3 py-3">
+              <p className="text-[11px] uppercase tracking-wide text-emerald-700">
+                Laba
+              </p>
+              <p className="mt-0.5 text-base font-bold text-emerald-800">
+                {formatMoney(salesSummary.profit, user.currency)}
+              </p>
+              <p className="text-[10px] text-emerald-700/80">
+                omzet{" "}
+                {formatMoney(salesSummary.revenue, user.currency)}
+              </p>
+            </div>
+            <div className="rounded-xl bg-indigo-50 px-3 py-3">
+              <p className="text-[11px] uppercase tracking-wide text-indigo-700">
+                Barang Terjual
+              </p>
+              <p className="mt-0.5 text-base font-bold text-indigo-800">
+                {Number(salesSummary.items_sold).toLocaleString("id-ID")} unit
+              </p>
+              <p className="text-[10px] text-indigo-700/80">
+                {salesSummary.sales_count} transaksi
+              </p>
+            </div>
+          </div>
+          {salesSummary.unpaid_count > 0 ? (
+            <Link
+              href="/sales"
+              className="mt-3 flex items-center justify-between rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800"
+            >
+              <span>
+                <span className="font-semibold">
+                  {salesSummary.unpaid_count}
+                </span>{" "}
+                pembeli belum bayar
+              </span>
+              <span className="font-semibold">
+                {formatMoney(salesSummary.unpaid_amount, user.currency)} →
+              </span>
+            </Link>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="mx-4 mt-4">
         <Link
           href="/receipt"
           className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-brand-300 bg-white px-4 py-5 text-brand-700 shadow-sm"
         >
-          <span className="text-2xl">📷</span>
+          <Camera size={22} className="text-brand-600" strokeWidth={2.5} />
           <span className="text-sm font-semibold">Foto Struk (OCR)</span>
         </Link>
       </section>

@@ -292,6 +292,13 @@ function SettingsInner({ user }: { user: UserMe }) {
             <span>📦 Stok Barang (Inventaris)</span>
             <span className="text-slate-400">›</span>
           </Link>
+          <Link
+            href="/sales"
+            className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-100"
+          >
+            <span>🛒 Penjualan ke Pembeli (Laba & Hutang)</span>
+            <span className="text-slate-400">›</span>
+          </Link>
         </section>
       ) : null}
 

@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Home, History, PlusCircle, ScanLine, Settings } from "lucide-react";
 
 const tabs = [
-  { href: "/dashboard", label: "Beranda", icon: "🏠" },
-  { href: "/history", label: "Riwayat", icon: "📜" },
-  { href: "/add", label: "Tambah", icon: "➕" },
-  { href: "/receipt", label: "Struk", icon: "📷" },
-  { href: "/settings", label: "Setelan", icon: "⚙️" },
+  { href: "/dashboard", label: "Beranda", Icon: Home },
+  { href: "/history", label: "Riwayat", Icon: History },
+  { href: "/add", label: "Tambah", Icon: PlusCircle },
+  { href: "/receipt", label: "Struk", Icon: ScanLine },
+  { href: "/settings", label: "Setelan", Icon: Settings },
 ];
 
 export function BottomNav() {
@@ -20,6 +21,7 @@ export function BottomNav() {
           const active =
             pathname === t.href ||
             (t.href !== "/dashboard" && pathname.startsWith(t.href));
+          const Icon = t.Icon;
           return (
             <li key={t.href} className="flex-1">
               <Link
@@ -29,7 +31,11 @@ export function BottomNav() {
                   (active ? "text-brand-600" : "text-slate-500")
                 }
               >
-                <span className="text-xl leading-none">{t.icon}</span>
+                <Icon
+                  size={22}
+                  strokeWidth={active ? 2.5 : 2}
+                  className="leading-none"
+                />
                 <span>{t.label}</span>
               </Link>
             </li>

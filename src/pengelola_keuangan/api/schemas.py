@@ -459,3 +459,107 @@ class InventoryMovementCreate(BaseModel):
     reason: Literal["purchase", "sale", "adjustment", "initial"] = "adjustment"
     note: str | None = Field(default=None, max_length=255)
     occurred_at: datetime | None = None
+
+
+# ----- Penjualan (Sales) — Pengusaha -----
+
+SalePaymentMethodLit = Literal["cash", "debit", "credit", "unpaid"]
+SalePaymentStatusLit = Literal["paid", "unpaid", "partial"]
+
+
+class SaleItemInput(BaseModel):
+    """One line item when creating a sale.
+
+    If ``inventory_item_id`` is set, the sale will also create a
+    corresponding negative inventory movement (reason=SALE) and snapshot
+    ``unit_cost`` from the item's latest cost basis (or the provided
+    ``unit_cost``). Sales for non-inventory items (e.g. one-off services)
+    can omit ``inventory_item_id``.
+    """
+
+    inventory_item_id: int | None = None
+    name: str = Field(min_length=1, max_length=255)
+    qty: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(ge=0)
+    unit_cost: Decimal | None = Field(default=None, ge=0)
+
+
+class SaleItemResponse(BaseModel):
+    """A line item on a sale."""
+
+    id: int
+    inventory_item_id: int | None
+    name: str
+    qty: Decimal
+    unit_price: Decimal
+    unit_cost: Decimal
+    subtotal: Decimal
+    profit: Decimal
+
+
+class SaleCreate(BaseModel):
+    """Create a new sale (penjualan ke pembeli)."""
+
+    contact_id: int | None = None
+    payment_method: SalePaymentMethodLit = "cash"
+    account_id: int | None = Field(
+        default=None,
+        description="Akun kas tujuan (wajib kalau payment_method != unpaid dan user pakai multi-akun)",
+    )
+    items: list[SaleItemInput] = Field(min_length=1)
+    note: str | None = Field(default=None, max_length=500)
+    occurred_at: datetime | None = None
+
+
+class SaleMarkPaidRequest(BaseModel):
+    """Mark an unpaid (or partial) sale as paid / partially paid."""
+
+    account_id: int | None = None
+    paid_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Jumlah yang dibayar; null = lunas total",
+    )
+    payment_method: SalePaymentMethodLit | None = None
+    occurred_at: datetime | None = None
+
+
+class SaleResponse(BaseModel):
+    """A sale (penjualan) record."""
+
+    id: int
+    contact_id: int | None
+    contact_name: str | None
+    payment_method: SalePaymentMethodLit
+    payment_status: SalePaymentStatusLit
+    account_id: int | None
+    account_name: str | None
+    transaction_id: int | None
+    total_amount: Decimal
+    paid_amount: Decimal
+    profit: Decimal
+    note: str | None
+    paid_at: datetime | None
+    occurred_at: datetime
+    created_at: datetime
+    items: list[SaleItemResponse] = Field(default_factory=list)
+
+
+class SalesSummaryResponse(BaseModel):
+    """Aggregate sales metrics for a date range (default: current month).
+
+    ``revenue`` = sum(item.qty * item.unit_price).
+    ``cost``    = sum(item.qty * item.unit_cost).
+    ``profit``  = revenue - cost.
+    ``items_sold`` = sum(item.qty) across all items.
+    """
+
+    period_from: datetime
+    period_to: datetime
+    revenue: Decimal
+    cost: Decimal
+    profit: Decimal
+    items_sold: Decimal
+    sales_count: int
+    unpaid_count: int
+    unpaid_amount: Decimal
