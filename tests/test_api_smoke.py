@@ -553,3 +553,133 @@ def test_accounts_data_isolation(client: TestClient) -> None:
         headers=b_h,
     )
     assert r.status_code == 400
+
+
+def test_inventory_crud_and_movements(client: TestClient) -> None:
+    token = _register(client)
+    h = {"Authorization": f"Bearer {token}"}
+
+    # empty
+    assert client.get("/api/inventory", headers=h).json() == []
+
+    # create with initial stock
+    r = client.post(
+        "/api/inventory",
+        json={
+            "name": "Sabun Cuci",
+            "sku": "SC-001",
+            "unit": "pcs",
+            "initial_stock": "10",
+            "initial_cost": "5000",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, r.text
+    item = r.json()
+    assert Decimal(item["stock"]) == Decimal("10")
+    assert Decimal(item["last_cost"]) == Decimal("5000")
+    item_id = item["id"]
+
+    # purchase 5 more at higher cost
+    r = client.post(
+        f"/api/inventory/{item_id}/movements",
+        json={"qty_delta": "5", "unit_cost": "5500", "reason": "purchase"},
+        headers=h,
+    )
+    assert r.status_code == 201
+
+    # sale 3 (negative qty_delta)
+    r = client.post(
+        f"/api/inventory/{item_id}/movements",
+        json={"qty_delta": "-3", "reason": "sale"},
+        headers=h,
+    )
+    assert r.status_code == 201
+
+    # stock = 10 + 5 - 3 = 12; last_cost = 5500 (from latest purchase)
+    r = client.get(f"/api/inventory/{item_id}", headers=h)
+    assert Decimal(r.json()["stock"]) == Decimal("12")
+    assert Decimal(r.json()["last_cost"]) == Decimal("5500")
+
+    # zero qty_delta rejected
+    r = client.post(
+        f"/api/inventory/{item_id}/movements",
+        json={"qty_delta": "0", "reason": "adjustment"},
+        headers=h,
+    )
+    assert r.status_code == 400
+
+    # over-sell rejected (current stock 12, trying to take 100)
+    r = client.post(
+        f"/api/inventory/{item_id}/movements",
+        json={"qty_delta": "-100", "reason": "sale"},
+        headers=h,
+    )
+    assert r.status_code == 400
+
+    # movement history
+    r = client.get(f"/api/inventory/{item_id}/movements", headers=h)
+    assert len(r.json()) == 3
+
+    # search by name
+    r = client.get("/api/inventory?q=sabun", headers=h)
+    assert len(r.json()) == 1
+
+    # patch metadata
+    r = client.patch(
+        f"/api/inventory/{item_id}",
+        json={"name": "Sabun Cuci Sereh", "unit": "btl"},
+        headers=h,
+    )
+    assert r.json()["name"] == "Sabun Cuci Sereh"
+    assert r.json()["unit"] == "btl"
+
+    # archive
+    r = client.post(f"/api/inventory/{item_id}/archive", headers=h)
+    assert r.json()["archived"] is True
+    assert client.get("/api/inventory", headers=h).json() == []
+    assert (
+        len(client.get("/api/inventory?include_archived=true", headers=h).json())
+        == 1
+    )
+
+    # invalid reason rejected by schema
+    r = client.post(
+        f"/api/inventory/{item_id}/movements",
+        json={"qty_delta": "1", "reason": "stolen"},
+        headers=h,
+    )
+    assert r.status_code == 422
+
+
+def test_inventory_data_isolation(client: TestClient) -> None:
+    a_token = _register(client, "a-inv@example.com")
+    b_token = _register(client, "b-inv@example.com")
+    a_h = {"Authorization": f"Bearer {a_token}"}
+    b_h = {"Authorization": f"Bearer {b_token}"}
+
+    r = client.post(
+        "/api/inventory",
+        json={"name": "Item A", "initial_stock": "5", "initial_cost": "1000"},
+        headers=a_h,
+    )
+    item_id = r.json()["id"]
+
+    # B can't see / patch / delete A's item
+    assert client.get("/api/inventory", headers=b_h).json() == []
+    assert client.get(f"/api/inventory/{item_id}", headers=b_h).status_code == 404
+    assert (
+        client.patch(
+            f"/api/inventory/{item_id}", json={"name": "h4x"}, headers=b_h
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/inventory/{item_id}/movements",
+            json={"qty_delta": "1", "reason": "purchase"},
+            headers=b_h,
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/api/inventory/{item_id}", headers=b_h).status_code == 404

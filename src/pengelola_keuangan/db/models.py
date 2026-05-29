@@ -390,3 +390,193 @@ class Transfer(Base):
 
     from_account: Mapped[Account] = relationship(foreign_keys=[from_account_id])
     to_account: Mapped[Account] = relationship(foreign_keys=[to_account_id])
+
+
+class MovementReason(StrEnum):
+    """Reason / source of an inventory movement."""
+
+    PURCHASE = "purchase"
+    SALE = "sale"
+    ADJUSTMENT = "adjustment"
+    INITIAL = "initial"
+
+
+class SalePaymentMethod(StrEnum):
+    """How a sale was/will be paid."""
+
+    CASH = "cash"
+    DEBIT = "debit"
+    CREDIT = "credit"
+    UNPAID = "unpaid"
+
+
+class SalePaymentStatus(StrEnum):
+    """Payment status of a sale (piutang/hutang tracking)."""
+
+    PAID = "paid"
+    UNPAID = "unpaid"
+    PARTIAL = "partial"
+
+
+class InventoryItem(Base):
+    """Inventory item (stok barang) for Pengusaha mode.
+
+    Current stock = sum(movements.qty_delta). Last unit cost is taken
+    from the most recent movement that has a non-NULL ``unit_cost``
+    (typically a purchase movement).
+    """
+
+    __tablename__ = "inventory_items"
+    __table_args__ = (Index("ix_inventory_user_name", "user_id", "name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    unit: Mapped[str] = mapped_column(String(16), default="pcs", nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    movements: Mapped[list[InventoryMovement]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="InventoryMovement.occurred_at.desc()",
+    )
+
+
+class InventoryMovement(Base):
+    """Single stock movement (in/out) of an inventory item.
+
+    Positive ``qty_delta`` = stock in (purchase / initial), negative =
+    stock out (sale / adjustment). ``unit_cost`` is optional; when set
+    it's the per-unit acquisition cost (for HPP / valuation).
+    """
+
+    __tablename__ = "inventory_movements"
+    __table_args__ = (
+        Index("ix_movements_user_occurred", "user_id", "occurred_at"),
+        Index("ix_movements_item_occurred", "inventory_item_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    inventory_item_id: Mapped[int] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False
+    )
+    qty_delta: Mapped[Decimal] = mapped_column(Numeric(18, 3), nullable=False)
+    unit_cost: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    reason: Mapped[MovementReason] = mapped_column(
+        String(16), default=MovementReason.ADJUSTMENT, nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    item: Mapped[InventoryItem] = relationship(back_populates="movements")
+
+
+class Sale(Base):
+    """A sales transaction from a Pengusaha to a buyer (Contact).
+
+    A sale always has 1+ line items (``items``). When ``payment_method``
+    is anything other than ``UNPAID``, the system also creates an
+    associated income ``Transaction`` and the sale is marked as PAID
+    immediately. UNPAID sales sit in piutang until ``mark_paid`` flips
+    them to PAID (or PARTIAL).
+    """
+
+    __tablename__ = "sales"
+    __table_args__ = (
+        Index("ix_sales_user_occurred", "user_id", "occurred_at"),
+        Index("ix_sales_user_status", "user_id", "payment_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    contact_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    payment_method: Mapped[SalePaymentMethod] = mapped_column(
+        String(16), default=SalePaymentMethod.CASH, nullable=False
+    )
+    payment_status: Mapped[SalePaymentStatus] = mapped_column(
+        String(16), default=SalePaymentStatus.PAID, nullable=False
+    )
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
+    )
+    total_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0"), nullable=False
+    )
+    paid_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0"), nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    contact: Mapped[Contact | None] = relationship()
+    account: Mapped[Account | None] = relationship()
+    transaction: Mapped[Transaction | None] = relationship()
+    items: Mapped[list[SaleItem]] = relationship(
+        back_populates="sale",
+        cascade="all, delete-orphan",
+        order_by="SaleItem.id",
+    )
+
+
+class SaleItem(Base):
+    """A single line item on a sale.
+
+    ``unit_cost`` is snapshotted at sale time so that historical profit
+    stays correct even if the inventory item's cost basis changes later
+    (purchases re-price the item). When ``inventory_item_id`` is set,
+    creating the sale also produces a corresponding negative
+    ``InventoryMovement`` (reason=SALE) to deduct stock.
+    """
+
+    __tablename__ = "sale_items"
+    __table_args__ = (Index("ix_sale_items_sale", "sale_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sale_id: Mapped[int] = mapped_column(
+        ForeignKey("sales.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    inventory_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True
+    )
+    movement_id: Mapped[int | None] = mapped_column(
+        ForeignKey("inventory_movements.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    qty: Mapped[Decimal] = mapped_column(Numeric(18, 3), default=Decimal("1"), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    unit_cost: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0"), nullable=False
+    )
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    sale: Mapped[Sale] = relationship(back_populates="items")
