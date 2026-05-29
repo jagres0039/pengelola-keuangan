@@ -46,6 +46,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib di-set di .env}
       JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES:-43200}
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-*}
+      BILLING_INSTRUCTIONS: ${BILLING_INSTRUCTIONS:-}
     command: ["sh", "-c", "alembic upgrade head && python -m uvicorn pengelola_keuangan.api.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'"]
     expose:
       - "8000"
@@ -59,6 +60,19 @@ services:
       NODE_ENV: production
     expose:
       - "3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
 
   nginx:
     image: nginx:1.27-alpine

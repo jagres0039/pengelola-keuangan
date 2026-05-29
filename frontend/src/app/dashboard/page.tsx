@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/AuthGuard";
 import { PageWithNav } from "@/components/BottomNav";
+import { Settings, TrendingUp, TrendingDown, Camera } from "lucide-react";
 import { api, type LowBalanceStatus, type Summary, type UserMe } from "@/lib/api";
 import { formatMoney } from "@/lib/format";
 
@@ -49,7 +50,7 @@ function DashboardInner({ user }: { user: UserMe }) {
           href="/settings"
           className="grid h-10 w-10 place-items-center rounded-full bg-white shadow"
         >
-          ⚙️
+          <Settings size={18} className="text-slate-600" />
         </Link>
       </header>
 
@@ -131,14 +132,18 @@ function DashboardInner({ user }: { user: UserMe }) {
           href="/add?type=in"
           className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-emerald-100 px-4 py-5 text-emerald-700 shadow-sm"
         >
-          <span className="text-2xl">💰</span>
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-200/50">
+            <TrendingUp size={22} className="text-emerald-700" strokeWidth={2.5} />
+          </span>
           <span className="text-sm font-semibold">Catat Masuk</span>
         </Link>
         <Link
           href="/add?type=out"
           className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-rose-100 px-4 py-5 text-rose-700 shadow-sm"
         >
-          <span className="text-2xl">💸</span>
+          <span className="grid h-10 w-10 place-items-center rounded-full bg-rose-200/50">
+            <TrendingDown size={22} className="text-rose-700" strokeWidth={2.5} />
+          </span>
           <span className="text-sm font-semibold">Catat Keluar</span>
         </Link>
       </section>
@@ -148,7 +153,7 @@ function DashboardInner({ user }: { user: UserMe }) {
           href="/receipt"
           className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-brand-300 bg-white px-4 py-5 text-brand-700 shadow-sm"
         >
-          <span className="text-2xl">📷</span>
+          <Camera size={22} className="text-brand-600" strokeWidth={2.5} />
           <span className="text-sm font-semibold">Foto Struk (OCR)</span>
         </Link>
       </section>
