@@ -66,3 +66,12 @@ next-env.d.ts
 # Certbot data (issued certs live on the VPS, not in git)
 deploy/certbot/conf/
 deploy/certbot/www/
+
+# Backup / sensitive files
+*.bak
+*.bak.*
+.env.bak*
+.env.local
+.env.*.local
+package-lock.json
+package.json
