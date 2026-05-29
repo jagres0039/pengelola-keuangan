@@ -28,6 +28,21 @@ class ReceiptParseError(RuntimeError):
     """Raised when a receipt cannot be parsed."""
 
 
+class _ReceiptItemSchema(BaseModel):
+    """Line item on a receipt."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(description="Nama barang / item / layanan.")
+    qty: float = Field(
+        default=1.0, description="Kuantitas (jumlah unit). Default 1 kalau tidak terlihat."
+    )
+    unit_price: float = Field(default=0.0, description="Harga satuan. 0 kalau tidak ada.")
+    subtotal: float = Field(
+        default=0.0, description="Subtotal baris (qty x unit_price). Wajib >= 0."
+    )
+
+
 class _ReceiptSchema(BaseModel):
     """JSON schema we ask Gemini to populate.
 
@@ -54,6 +69,20 @@ class _ReceiptSchema(BaseModel):
         description="Nama kategori yang paling cocok dari daftar yang diberikan. Boleh kosong.",
     )
     notes: str = Field(default="", description="Ringkasan singkat (1 kalimat) tentang transaksi.")
+    items: list[_ReceiptItemSchema] = Field(
+        default_factory=list,
+        description="Daftar barang yang dibeli di struk. Kosong [] kalau tidak terbaca.",
+    )
+
+
+@dataclass(slots=True, frozen=True)
+class OCRItem:
+    """A line item parsed from a receipt."""
+
+    name: str
+    qty: Decimal
+    unit_price: Decimal | None
+    subtotal: Decimal
 
 
 @dataclass(slots=True)
@@ -68,6 +97,7 @@ class OCRResult:
     suggested_category: str
     notes: str
     raw_text: str
+    items: list[OCRItem]
 
     def is_valid(self) -> bool:
         """Return True if the result is usable for creating a transaction."""
@@ -128,6 +158,11 @@ def _build_prompt(category_hints: Sequence[str], default_currency: str) -> str:
         "- 'merchant' = nama toko/penjual (singkat, contoh: 'Indomaret', 'Gojek', 'KFC').\n"
         "- 'notes' = ringkasan 1 kalimat singkat tentang transaksi "
         "(contoh: 'Belanja di Indomaret Sudirman, 5 item').\n"
+        "- 'items' = daftar barang/jasa yang dibeli. Tiap item: 'name' (nama barang singkat "
+        "  tanpa kode SKU), 'qty' (kuantitas, default 1 kalau gak tertera), 'unit_price' "
+        "  (harga satuan, 0 kalau gak tertera), 'subtotal' (total baris item itu). "
+        "  Skip baris yang BUKAN item (subtotal, diskon, pajak, biaya layanan, total, kembalian, "
+        "  nama kasir, dll). Kalau gak ada item kelihatan, kembalikan [].\n"
         "\n"
         "Jawab HANYA dengan JSON sesuai skema yang diminta. Tanpa penjelasan tambahan."
     )
@@ -203,6 +238,21 @@ def parse_receipt(
                 f"Respons Gemini tidak bisa di-parse: {raw_text[:200]}"
             ) from exc
 
+    items: list[OCRItem] = []
+    for raw_item in parsed.items or []:
+        name = (raw_item.name or "").strip()
+        if not name:
+            continue
+        qty = _coerce_decimal(raw_item.qty) if raw_item.qty else Decimal("1")
+        if qty <= 0:
+            qty = Decimal("1")
+        subtotal = _coerce_decimal(raw_item.subtotal)
+        unit_price_raw = _coerce_decimal(raw_item.unit_price) if raw_item.unit_price else None
+        unit_price = unit_price_raw if unit_price_raw and unit_price_raw > 0 else None
+        if subtotal <= 0 and unit_price is not None:
+            subtotal = unit_price * qty
+        items.append(OCRItem(name=name, qty=qty, unit_price=unit_price, subtotal=subtotal))
+
     return OCRResult(
         is_receipt=bool(parsed.is_receipt),
         merchant=(parsed.merchant or "").strip(),
@@ -212,4 +262,5 @@ def parse_receipt(
         suggested_category=(parsed.suggested_category or "").strip(),
         notes=(parsed.notes or "").strip(),
         raw_text=raw_text,
+        items=items,
     )

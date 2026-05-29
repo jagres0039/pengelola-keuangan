@@ -89,6 +89,7 @@ export type UserMe = {
   timezone: string;
   currency: string;
   telegram_linked: boolean;
+  low_balance_threshold: string;
 };
 
 export type Category = {
@@ -99,6 +100,14 @@ export type Category = {
   is_default: boolean;
 };
 
+export type TransactionItem = {
+  id: number;
+  name: string;
+  qty: string;
+  unit_price: string | null;
+  subtotal: string;
+};
+
 export type Transaction = {
   id: number;
   type: "in" | "out";
@@ -107,6 +116,7 @@ export type Transaction = {
   category_name: string | null;
   note: string | null;
   occurred_at: string;
+  items: TransactionItem[];
 };
 
 export type CategoryTotal = {
@@ -134,6 +144,13 @@ export type Budget = {
   remaining: string;
 };
 
+export type ReceiptOCRItem = {
+  name: string;
+  qty: string;
+  unit_price: string | null;
+  subtotal: string;
+};
+
 export type ReceiptOCR = {
   is_receipt: boolean;
   merchant: string;
@@ -143,9 +160,43 @@ export type ReceiptOCR = {
   suggested_category: string;
   suggested_category_id: number | null;
   notes: string;
+  items: ReceiptOCRItem[];
 };
 
 export type LinkCode = {
   code: string;
   expires_at: string;
+};
+
+export type LowBalanceStatus = {
+  is_low: boolean;
+  balance: string;
+  threshold: string;
+  total_income: string;
+  total_expense: string;
+};
+
+export type ImportPreviewRow = {
+  action: string;
+  row_index: number | null;
+  transaction_id: number | null;
+  type: string;
+  amount: string;
+  category_name: string;
+  note: string | null;
+  occurred_at: string | null;
+};
+
+export type ImportPreviewResponse = {
+  plan_id: string;
+  to_create: ImportPreviewRow[];
+  to_update: ImportPreviewRow[];
+  to_delete: ImportPreviewRow[];
+  errors: string[];
+};
+
+export type ImportApplyResponse = {
+  created: number;
+  updated: number;
+  deleted: number;
 };

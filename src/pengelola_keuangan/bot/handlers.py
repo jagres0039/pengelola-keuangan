@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from datetime import UTC
 from datetime import datetime as datetime_t
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from sqlalchemy.orm import Session
@@ -964,12 +964,22 @@ async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
     display_category = chosen_name or result.suggested_category or "Lainnya"
 
+    items_serialized = [
+        {
+            "name": item.name,
+            "qty": str(item.qty),
+            "unit_price": str(item.unit_price) if item.unit_price is not None else None,
+            "subtotal": str(item.subtotal),
+        }
+        for item in result.items
+    ]
     pending = {
         "merchant": result.merchant,
         "amount": str(result.total_amount),
         "occurred_at": result.occurred_at.isoformat() if result.occurred_at else None,
         "category_name": chosen_name,
         "notes": result.notes,
+        "items": items_serialized,
     }
     context.user_data[PENDING_RECEIPT_KEY] = pending  # type: ignore[index]
 
@@ -981,6 +991,9 @@ async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TY
             ]
         ]
     )
+    preview_items: list[tuple[str, Decimal, Decimal]] = [
+        (item.name, item.qty, item.subtotal) for item in result.items
+    ]
     preview = messages.receipt_preview(
         merchant=result.merchant,
         amount=result.total_amount,
@@ -989,6 +1002,7 @@ async def receipt_photo_handler(update: Update, context: ContextTypes.DEFAULT_TY
         category_name=display_category,
         notes=result.notes,
         tz_name=user_tz,
+        items=preview_items,
     )
     try:
         await notice.edit_text(preview, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
@@ -1034,6 +1048,27 @@ async def receipt_callback_handler(update: Update, context: ContextTypes.DEFAULT
     merchant = cast(str, pending.get("merchant") or "")
     category_name = cast(str | None, pending.get("category_name"))
     notes = cast(str, pending.get("notes") or "")
+    raw_items = cast(list[dict[str, object]], pending.get("items") or [])
+    item_inputs: list[transactions_svc.ItemInput] = []
+    for raw_item in raw_items:
+        try:
+            name = str(raw_item.get("name") or "").strip()
+            if not name:
+                continue
+            qty = Decimal(cast(str, raw_item.get("qty") or "1"))
+            up_raw = raw_item.get("unit_price")
+            unit_price = Decimal(cast(str, up_raw)) if up_raw else None
+            subtotal = Decimal(cast(str, raw_item.get("subtotal") or "0"))
+            item_inputs.append(
+                transactions_svc.ItemInput(
+                    name=name,
+                    qty=qty if qty > 0 else Decimal("1"),
+                    unit_price=unit_price,
+                    subtotal=subtotal,
+                )
+            )
+        except (InvalidOperation, ValueError):
+            continue
 
     note_parts: list[str] = []
     if merchant:
@@ -1065,6 +1100,7 @@ async def receipt_callback_handler(update: Update, context: ContextTypes.DEFAULT
             note=note,
             occurred_at=occurred_at,
             user_tz=user.timezone,
+            items=item_inputs or None,
         )
         currency = user.currency
         msg = messages.receipt_saved(transaction, category, currency)

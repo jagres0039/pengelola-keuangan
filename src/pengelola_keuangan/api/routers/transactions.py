@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, status
 from pengelola_keuangan.api.deps import CurrentUser, DBSession
 from pengelola_keuangan.api.schemas import (
     TransactionCreate,
+    TransactionItemInput,
+    TransactionItemResponse,
     TransactionResponse,
     TransactionUpdate,
 )
@@ -26,7 +28,29 @@ def _to_response(tx: Transaction) -> TransactionResponse:
         category_name=tx.category.name if tx.category is not None else None,
         note=tx.note,
         occurred_at=tx.occurred_at,
+        items=[
+            TransactionItemResponse(
+                id=item.id,
+                name=item.name,
+                qty=item.qty,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+            )
+            for item in tx.items
+        ],
     )
+
+
+def _to_item_inputs(items: list[TransactionItemInput]) -> list[tx_svc.ItemInput]:
+    return [
+        tx_svc.ItemInput(
+            name=item.name.strip(),
+            qty=item.qty,
+            unit_price=item.unit_price,
+            subtotal=item.subtotal,
+        )
+        for item in items
+    ]
 
 
 @router.get("", response_model=list[TransactionResponse])
@@ -71,6 +95,7 @@ def create_transaction(
         note=payload.note,
         occurred_at=payload.occurred_at,
         user_tz=user.timezone,
+        items=_to_item_inputs(payload.items),
     )
     return _to_response(tx)
 
@@ -108,6 +133,8 @@ def update_transaction(
         tx.note = payload.note.strip() or None
     if payload.occurred_at is not None:
         tx.occurred_at = payload.occurred_at
+    if payload.items is not None:
+        tx_svc.replace_items(session, user.id, tx.id, _to_item_inputs(payload.items))
     session.flush()
     return _to_response(tx)
 
